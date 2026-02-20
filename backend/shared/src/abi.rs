@@ -69,7 +69,7 @@ pub fn generate_markdown(specs: &[ContractSpec], name: &str) -> String {
         if spec.outputs.is_empty() {
             md.push_str("`void`");
         } else {
-            let types: Vec<_> = spec.outputs.iter().map(|o| &o.type_name).collect();
+            let types: Vec<&str> = spec.outputs.iter().map(|o| o.type_name.as_str()).collect();
             md.push_str(&format!("`{}`", types.join(", ")));
         }
         

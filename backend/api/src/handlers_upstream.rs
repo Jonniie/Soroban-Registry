@@ -1,4 +1,4 @@
-ï»¿pub mod migrations;
+pub mod migrations;
 
 use axum::{
     extract::{
@@ -41,14 +41,14 @@ fn map_query_rejection(err: QueryRejection) -> ApiError {
     )
 }
 
-/// Health check Î“Ã‡Ã¶ probes DB connectivity and reports uptime.
+/// Health check GÇö probes DB connectivity and reports uptime.
 /// Returns 200 when everything is reachable, 503 when the database
 /// connection pool cannot satisfy a trivial query.
 pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     let uptime = state.started_at.elapsed().as_secs();
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Quick connectivity probe Î“Ã‡Ã¶ keeps the query as cheap as possible
+    // Quick connectivity probe GÇö keeps the query as cheap as possible
     // so that frequent polling from orchestrators doesn't add load.
     let db_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&state.db)
@@ -70,7 +70,7 @@ pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<se
     } else {
         tracing::warn!(
             uptime_secs = uptime,
-            "health check degraded Î“Ã‡Ã¶ db unreachable"
+            "health check degraded GÇö db unreachable"
         );
 
         (
@@ -451,89 +451,6 @@ pub async fn get_contract_analytics(
     // Verify the contract exists
     let _contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| match err {
-            sqlx::Error::RowNotFound => ApiError::not_found(
-                "ContractNotFound",
-                format!("No contract found with ID: {}", id),
-            ),
-            _ => db_internal_error("get contract for analytics", err),
-        })?;
-
-    let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
-
-    // Deployment stats
-    let deploy_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM analytics_events WHERE contract_id = $1 AND event_type = 'contract_deployed'",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("deployment count", e))?;
-
-    let unique_deployers: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT user_address) FROM analytics_events WHERE contract_id = $1 AND event_type = 'contract_deployed' AND user_address IS NOT NULL",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("unique deployers", e))?;
-
-    let by_network: serde_json::Value = sqlx::query_scalar(
-        r#"SELECT COALESCE(jsonb_object_agg(COALESCE(network::text, 'unknown'), cnt), '{}'::jsonb)
-        FROM (SELECT network, COUNT(*) AS cnt FROM analytics_events WHERE contract_id = $1 AND event_type = 'contract_deployed' GROUP BY network) sub"#,
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("network breakdown", e))?;
-
-    let unique_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT user_address) FROM analytics_events WHERE contract_id = $1 AND user_address IS NOT NULL",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("unique interactors", e))?;
-
-    let top_user_rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT user_address, COUNT(*) AS cnt FROM analytics_events WHERE contract_id = $1 AND user_address IS NOT NULL GROUP BY user_address ORDER BY cnt DESC LIMIT 10",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| db_internal_error("top users", e))?;
-
-    let top_users: Vec<TopUser> = top_user_rows
-        .into_iter()
-        .map(|(address, count)| TopUser { address, count })
-        .collect();
-
-    let timeline_rows: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
-        r#"SELECT d::date AS date, COALESCE(e.cnt, 0) AS count
-        FROM generate_series(($1::timestamptz)::date, CURRENT_DATE, '1 day'::interval) d
-        LEFT JOIN (SELECT DATE(created_at) AS event_date, COUNT(*) AS cnt FROM analytics_events WHERE contract_id = $2 AND created_at >= $1 GROUP BY DATE(created_at)) e ON d::date = e.event_date
-        ORDER BY d::date"#,
-    )
-    .bind(thirty_days_ago)
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| db_internal_error("timeline", e))?;
-
-    let timeline: Vec<TimelineEntry> = timeline_rows
-        .into_iter()
-        .map(|(date, count)| TimelineEntry { date, count })
-        .collect();
-
-    Ok(Json(ContractAnalyticsResponse {
-        contract_id: id,
-        deployments: DeploymentStats { count: deploy_count, unique_users: unique_deployers, by_network },
-        interactors: InteractorStats { unique_count, top_users },
-        timeline,
-    }))
-}
 pub async fn deploy_green(
     State(state): State<AppState>,
     payload: Result<Json<DeployGreenRequest>, JsonRejection>,
@@ -554,7 +471,7 @@ pub async fn deploy_green(
 
     let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
 
-    // Î“Ã¶Ã‡Î“Ã¶Ã‡ Deployment stats Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+    // GöÇGöÇ Deployment stats GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
     let deploy_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM analytics_events \
          WHERE contract_id = $1 AND event_type = 'contract_deployed'",
@@ -592,7 +509,7 @@ pub async fn deploy_green(
     .await
     .map_err(|e| db_internal_error("network breakdown", e))?;
 
-    // Î“Ã¶Ã‡Î“Ã¶Ã‡ Interactor stats Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+    // GöÇGöÇ Interactor stats GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
     let unique_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(DISTINCT user_address) FROM analytics_events \
          WHERE contract_id = $1 AND user_address IS NOT NULL",
@@ -617,7 +534,7 @@ pub async fn deploy_green(
         .map(|(address, count)| TopUser { address, count })
         .collect();
 
-    // Î“Ã¶Ã‡Î“Ã¶Ã‡ Timeline (last 30 days) Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+    // GöÇGöÇ Timeline (last 30 days) GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
     let timeline_rows: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
         r#"
         SELECT d::date AS date, COALESCE(e.cnt, 0) AS count
@@ -647,7 +564,7 @@ pub async fn deploy_green(
         .map(|(date, count)| TimelineEntry { date, count })
         .collect();
 
-    // Î“Ã¶Ã‡Î“Ã¶Ã‡ Build response Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡Î“Ã¶Ã‡
+    // GöÇGöÇ Build response GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
     Ok(Json(ContractAnalyticsResponse {
         contract_id: id,
         deployments: DeploymentStats {
@@ -663,6 +580,28 @@ pub async fn deploy_green(
     }))
 }
 
+/// Fallback endpoint for unknown routes
+                format!("Contract not found: {}", req.contract_id),
+            ),
+            _ => db_internal_error("get contract for deployment", err),
+        })?;
+
+    let deployment: ContractDeployment = sqlx::query_as(
+        "INSERT INTO contract_deployments (contract_id, environment, status, wasm_hash)
+         VALUES ($1, 'green', 'testing', $2)
+         ON CONFLICT (contract_id, environment) 
+         DO UPDATE SET wasm_hash = EXCLUDED.wasm_hash, status = 'testing', 
+                       deployed_at = NOW(), error_message = NULL
+         RETURNING *",
+    )
+    .bind(contract.id)
+    .bind(&req.wasm_hash)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| db_internal_error("deploy green", err))?;
+
+    Ok(Json(deployment))
+}
 
 pub async fn switch_deployment(
     State(state): State<AppState>,
@@ -974,75 +913,4 @@ pub async fn get_deployment_status(
 
 pub async fn route_not_found() -> ApiError {
     ApiError::not_found("RouteNotFound", "The requested endpoint does not exist")
-}
-
-use std::time::Duration;
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-pub struct CacheParams {
-    pub cache: Option<String>,
-}
-
-pub async fn get_contract_state(
-    State(state): State<AppState>,
-    Path((contract_id, key)): Path<(String, String)>,
-    Query(params): Query<CacheParams>,
-) -> ApiResult<Json<serde_json::Value>> {
-    let use_cache = params.cache.as_deref() == Some("on");
-
-    if use_cache {
-        if let Some(cached) = state.cache.get(&contract_id, &key).await {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cached) {
-                 return Ok(Json(val));
-            }
-        }
-    }
-
-    let start = std::time::Instant::now();
-    tokio::time::sleep(Duration::from_millis(100)).await; 
-    let value = serde_json::json!({ 
-        "contract_id": contract_id,
-        "key": key,
-        "value": &format!("state_of_{}_{}", contract_id, key), 
-        "fetched_at": &chrono::Utc::now().to_rfc3339() 
-    });
-    
-    if use_cache {
-        state.cache.record_uncached_latency(start.elapsed());
-        state.cache.put(&contract_id, &key, value.to_string(), None).await;
-    }
-
-    Ok(Json(value))
-}
-
-pub async fn update_contract_state(
-    State(state): State<AppState>,
-    Path((contract_id, key)): Path<(String, String)>,
-    Json(_payload): Json<serde_json::Value>,
-) -> ApiResult<Json<serde_json::Value>> {
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    state.cache.invalidate(&contract_id, &key).await;
-    Ok(Json(serde_json::json!({ "status": "updated", "invalidated": true })))
-}
-
-pub async fn get_cache_stats(
-    State(state): State<AppState>,
-) -> ApiResult<Json<serde_json::Value>> {
-    let metrics = state.cache.metrics();
-    let hits = metrics.hits.load(std::sync::atomic::Ordering::Relaxed);
-    let misses = metrics.misses.load(std::sync::atomic::Ordering::Relaxed);
-    let cached_count = metrics.cached_count.load(std::sync::atomic::Ordering::Relaxed);
-    
-    Ok(Json(serde_json::json!({
-        "metrics": {
-            "hit_rate_percent": metrics.hit_rate(),
-            "avg_cached_latency_us": metrics.avg_cached_latency(),
-            "avg_uncached_latency_us": metrics.avg_uncached_latency(),
-            "improvement_factor": metrics.improvement_factor(),
-            "hits": hits,
-            "misses": misses,
-            "cached_entries_count": cached_count,
-        }
-    })))
 }

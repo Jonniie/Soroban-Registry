@@ -320,6 +320,8 @@ pub struct TopUser {
 pub struct TimelineEntry {
     pub date: chrono::NaiveDate,
     pub count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployGreenRequest {
     pub contract_id: String,
