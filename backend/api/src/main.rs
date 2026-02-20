@@ -5,18 +5,31 @@ mod audit_routes;
 mod benchmark_engine;
 mod benchmark_handlers;
 mod benchmark_routes;
+mod cache;
+mod cache_benchmark;
 mod checklist;
 mod contract_history_handlers;
 mod contract_history_routes;
 mod detector;
 mod error;
 mod handlers;
+mod metrics;
+mod metrics_handler;
+mod models;
+mod multisig_handlers;
+mod multisig_routes;
+mod observability;
+mod popularity;
 mod rate_limit;
+mod residency_handlers;
+mod residency_routes;
 mod routes;
-mod scoring;
 mod state;
 mod template_handlers;
 mod template_routes;
+mod trust;
+mod health_monitor;
+mod migration_cli;
 
 use anyhow::Result;
 use axum::http::{header, HeaderValue, Method};
@@ -25,8 +38,8 @@ use dotenv::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::observability::Observability;
 use crate::rate_limit::RateLimitState;
 use crate::state::AppState;
 
@@ -35,14 +48,10 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenv().ok();
 
-    // Initialize tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "api=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let obs = Observability::init()?;
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let migration_command = migration_cli::parse_command(&args)?;
 
     // Database connection
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -52,18 +61,25 @@ async fn main() -> Result<()> {
         .connect(&database_url)
         .await?;
 
-    // Run migrations
+    // Run migrations by default, or execute migration subcommands.
+    if let Some(command) = migration_command {
+        migration_cli::execute(command, &pool).await?;
+        return Ok(());
+    }
+
     sqlx::migrate!("../../database/migrations")
         .run(&pool)
         .await?;
 
     tracing::info!("Database connected and migrations applied");
 
+    // Spawn background popularity scoring job (runs hourly)
+    popularity::spawn_popularity_task(pool.clone());
     // Spawn the hourly analytics aggregation background task
     aggregation::spawn_aggregation_task(pool.clone());
 
     // Create app state
-    let state = AppState::new(pool);
+    let state = AppState::new(pool, obs.registry);
     let rate_limit_state = RateLimitState::from_env();
 
     let cors = CorsLayer::new()
@@ -80,10 +96,16 @@ async fn main() -> Result<()> {
         .merge(routes::publisher_routes())
         .merge(routes::health_routes())
         .merge(routes::migration_routes())
-        .merge(audit_routes::security_audit_routes())
+        .merge(routes::canary_routes())
+        .merge(routes::ab_test_routes())
+        .merge(routes::performance_routes())
+        .merge(multisig_routes::multisig_routes())
+        .merge(audit_routes::audit_routes())
         .merge(benchmark_routes::benchmark_routes())
         .merge(contract_history_routes::contract_history_routes())
         .merge(template_routes::template_routes())
+        .merge(routes::observability_routes())
+        .merge(residency_routes::residency_routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_logger))
         .layer(middleware::from_fn_with_state(
@@ -125,3 +147,4 @@ async fn request_logger(
 
     response
 }
+        .merge(routes::publisher_routes())
