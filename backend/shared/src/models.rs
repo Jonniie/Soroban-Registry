@@ -313,6 +313,119 @@ pub struct RecordCanaryMetricRequest {
     pub p99_response_time_ms: Option<f64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "ab_test_status", rename_all = "snake_case")]
+pub enum AbTestStatus {
+    Draft,
+    Running,
+    Paused,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "variant_type", rename_all = "snake_case")]
+pub enum VariantType {
+    Control,
+    Treatment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AbTest {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: AbTestStatus,
+    pub traffic_split: Decimal,
+    pub variant_a_deployment_id: Uuid,
+    pub variant_b_deployment_id: Uuid,
+    pub primary_metric: String,
+    pub hypothesis: Option<String>,
+    pub significance_threshold: Decimal,
+    pub min_sample_size: i32,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub created_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AbTestVariant {
+    pub id: Uuid,
+    pub test_id: Uuid,
+    pub variant_type: VariantType,
+    pub deployment_id: Uuid,
+    pub traffic_percentage: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AbTestAssignment {
+    pub id: Uuid,
+    pub test_id: Uuid,
+    pub user_address: String,
+    pub variant_type: VariantType,
+    pub assigned_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AbTestMetric {
+    pub id: Uuid,
+    pub test_id: Uuid,
+    pub variant_type: VariantType,
+    pub metric_name: String,
+    pub metric_value: Decimal,
+    pub user_address: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AbTestResult {
+    pub id: Uuid,
+    pub test_id: Uuid,
+    pub variant_type: VariantType,
+    pub sample_size: i32,
+    pub mean_value: Option<Decimal>,
+    pub std_deviation: Option<Decimal>,
+    pub confidence_interval_lower: Option<Decimal>,
+    pub confidence_interval_upper: Option<Decimal>,
+    pub p_value: Option<Decimal>,
+    pub statistical_significance: Option<Decimal>,
+    pub is_winner: bool,
+    pub calculated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAbTestRequest {
+    pub contract_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub traffic_split: Option<f64>,
+    pub variant_a_deployment_id: String,
+    pub variant_b_deployment_id: String,
+    pub primary_metric: String,
+    pub hypothesis: Option<String>,
+    pub significance_threshold: Option<f64>,
+    pub min_sample_size: Option<i32>,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordAbTestMetricRequest {
+    pub test_id: String,
+    pub user_address: Option<String>,
+    pub metric_name: String,
+    pub metric_value: f64,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetVariantRequest {
+    pub test_id: String,
+    pub user_address: String,
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Analytics models
 // ────────────────────────────────────────────────────────────────────────────

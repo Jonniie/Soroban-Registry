@@ -82,6 +82,7 @@ async fn main() -> Result<()> {
         .merge(routes::health_routes())
         .merge(routes::migration_routes())
         .merge(routes::canary_routes())
+        .merge(routes::ab_test_routes())
         .merge(multisig_routes::multisig_routes())
         .merge(audit_routes::audit_routes())
         .merge(benchmark_routes::benchmark_routes())

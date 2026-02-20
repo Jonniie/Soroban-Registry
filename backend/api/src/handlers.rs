@@ -10,13 +10,16 @@ use axum::{
     Json,
 };
 use shared::{
+    AbTest, AbTestAssignment, AbTestMetric, AbTestResult, AbTestStatus, AbTestVariant,
     AdvanceCanaryRequest, CanaryMetric, CanaryRelease, CanaryStatus, CanaryUserAssignment,
-    Contract, ContractDeployment, ContractSearchParams, ContractVersion, CreateCanaryRequest,
-    DeployGreenRequest, DeploymentEnvironment, DeploymentStatus, DeploymentSwitch,
-    HealthCheckRequest, PaginatedResponse, PublishRequest, Publisher, RecordCanaryMetricRequest,
-    RolloutStage, SwitchDeploymentRequest, VerifyRequest,
+    Contract, ContractDeployment, ContractSearchParams, ContractVersion, CreateAbTestRequest,
+    CreateCanaryRequest, DeployGreenRequest, DeploymentEnvironment, DeploymentStatus,
+    DeploymentSwitch, GetVariantRequest, HealthCheckRequest, PaginatedResponse,
+    PublishRequest, Publisher, RecordAbTestMetricRequest, RecordCanaryMetricRequest, RolloutStage,
+    SwitchDeploymentRequest, VariantType, VerifyRequest,
 };
 use rust_decimal::Decimal;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::{
@@ -1063,4 +1066,530 @@ pub async fn get_cache_stats(
             "max_capacity": state.cache.config().max_capacity,
         }
     })))
+}
+
+pub async fn create_ab_test(
+    State(state): State<AppState>,
+    payload: Result<Json<CreateAbTestRequest>, JsonRejection>,
+) -> ApiResult<Json<AbTest>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&req.contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", req.contract_id),
+            ),
+            _ => db_internal_error("get contract for ab test", err),
+        })?;
+
+    let variant_a_uuid = Uuid::parse_str(&req.variant_a_deployment_id).map_err(|_| {
+        ApiError::bad_request(
+            "InvalidDeploymentId",
+            format!("Invalid variant A deployment ID: {}", req.variant_a_deployment_id),
+        )
+    })?;
+
+    let variant_b_uuid = Uuid::parse_str(&req.variant_b_deployment_id).map_err(|_| {
+        ApiError::bad_request(
+            "InvalidDeploymentId",
+            format!("Invalid variant B deployment ID: {}", req.variant_b_deployment_id),
+        )
+    })?;
+
+    let traffic_split = Decimal::try_from(req.traffic_split.unwrap_or(50.0))
+        .map_err(|_| ApiError::bad_request("InvalidSplit", "Invalid traffic split"))?;
+
+    let significance_threshold = Decimal::try_from(req.significance_threshold.unwrap_or(95.0))
+        .map_err(|_| ApiError::bad_request("InvalidThreshold", "Invalid significance threshold"))?;
+
+    let mut tx = state.db.begin().await.map_err(|err| {
+        db_internal_error("begin transaction for ab test", err)
+    })?;
+
+    let test: AbTest = sqlx::query_as(
+        "INSERT INTO ab_tests (
+            contract_id, name, description, status, traffic_split,
+            variant_a_deployment_id, variant_b_deployment_id, primary_metric,
+            hypothesis, significance_threshold, min_sample_size, created_by
+        ) VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING *",
+    )
+    .bind(contract.id)
+    .bind(&req.name)
+    .bind(&req.description)
+    .bind(traffic_split)
+    .bind(variant_a_uuid)
+    .bind(variant_b_uuid)
+    .bind(&req.primary_metric)
+    .bind(&req.hypothesis)
+    .bind(significance_threshold)
+    .bind(req.min_sample_size.unwrap_or(1000))
+    .bind(&req.created_by)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("create ab test", err))?;
+
+    sqlx::query(
+        "INSERT INTO ab_test_variants (test_id, variant_type, deployment_id, traffic_percentage)
+         VALUES ($1, 'control', $2, $3), ($1, 'treatment', $4, $5)",
+    )
+    .bind(test.id)
+    .bind(variant_a_uuid)
+    .bind(traffic_split)
+    .bind(variant_b_uuid)
+    .bind(Decimal::from(100) - traffic_split)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("create variants", err))?;
+
+    tx.commit().await.map_err(|err| {
+        db_internal_error("commit ab test", err)
+    })?;
+
+    Ok(Json(test))
+}
+
+pub async fn start_ab_test(
+    State(state): State<AppState>,
+    Path(test_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let test_uuid = Uuid::parse_str(&test_id).map_err(|_| {
+        ApiError::bad_request("InvalidTestId", format!("Invalid test ID: {}", test_id))
+    })?;
+
+    sqlx::query(
+        "UPDATE ab_tests 
+         SET status = 'running', started_at = NOW()
+         WHERE id = $1 AND status = 'draft'",
+    )
+    .bind(test_uuid)
+    .execute(&state.db)
+    .await
+    .map_err(|err| db_internal_error("start ab test", err))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "test_id": test_id,
+        "status": "running"
+    })))
+}
+
+pub async fn get_variant(
+    State(state): State<AppState>,
+    payload: Result<Json<GetVariantRequest>, JsonRejection>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+
+    let test_uuid = Uuid::parse_str(&req.test_id).map_err(|_| {
+        ApiError::bad_request("InvalidTestId", format!("Invalid test ID: {}", req.test_id))
+    })?;
+
+    let variant: Option<String> = sqlx::query_scalar(
+        "SELECT assign_variant($1, $2)",
+    )
+    .bind(test_uuid)
+    .bind(&req.user_address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get variant", err))?;
+
+    if let Some(v) = variant {
+        Ok(Json(serde_json::json!({
+            "variant": v,
+            "test_id": req.test_id,
+            "user_address": req.user_address
+        })))
+    } else {
+        Err(ApiError::not_found(
+            "TestNotFound",
+            format!("Test not found or not running: {}", req.test_id),
+        ))
+    }
+}
+
+pub async fn record_ab_test_metric(
+    State(state): State<AppState>,
+    payload: Result<Json<RecordAbTestMetricRequest>, JsonRejection>,
+) -> ApiResult<Json<AbTestMetric>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+
+    let test_uuid = Uuid::parse_str(&req.test_id).map_err(|_| {
+        ApiError::bad_request("InvalidTestId", format!("Invalid test ID: {}", req.test_id))
+    })?;
+
+    let variant = if let Some(ref user_addr) = req.user_address {
+        let assignment: Option<VariantType> = sqlx::query_as(
+            "SELECT variant_type FROM ab_test_assignments 
+             WHERE test_id = $1 AND user_address = $2",
+        )
+        .bind(test_uuid)
+        .bind(user_addr)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|err| db_internal_error("get assignment", err))?;
+
+        assignment.unwrap_or_else(|| {
+            let hash = (test_uuid.to_string() + user_addr).as_bytes();
+            let hash_val = (hash.iter().map(|&b| b as u32).sum::<u32>() % 100) as i32;
+            let test: AbTest = sqlx::query_as("SELECT * FROM ab_tests WHERE id = $1")
+                .bind(test_uuid)
+                .fetch_one(&state.db)
+                .await
+                .ok()
+                .unwrap();
+            
+            if hash_val < test.traffic_split.to_string().parse::<i32>().unwrap_or(50) {
+                VariantType::Control
+            } else {
+                VariantType::Treatment
+            }
+        })
+    } else {
+        return Err(ApiError::bad_request(
+            "UserAddressRequired",
+            "User address required for metric recording",
+        ));
+    };
+
+    let metric_value = Decimal::try_from(req.metric_value)
+        .map_err(|_| ApiError::bad_request("InvalidMetric", "Invalid metric value"))?;
+
+    let metric: AbTestMetric = sqlx::query_as(
+        "INSERT INTO ab_test_metrics (
+            test_id, variant_type, metric_name, metric_value, user_address, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *",
+    )
+    .bind(test_uuid)
+    .bind(&variant)
+    .bind(&req.metric_name)
+    .bind(metric_value)
+    .bind(&req.user_address)
+    .bind(&req.metadata)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| db_internal_error("record metric", err))?;
+
+    Ok(Json(metric))
+}
+
+pub async fn get_ab_test_results(
+    State(state): State<AppState>,
+    Path(test_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let test_uuid = Uuid::parse_str(&test_id).map_err(|_| {
+        ApiError::bad_request("InvalidTestId", format!("Invalid test ID: {}", test_id))
+    })?;
+
+    let test: AbTest = sqlx::query_as("SELECT * FROM ab_tests WHERE id = $1")
+        .bind(test_uuid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "TestNotFound",
+                format!("Test not found: {}", test_id),
+            ),
+            _ => db_internal_error("get test", err),
+        })?;
+
+    let control_metrics: Vec<AbTestMetric> = sqlx::query_as(
+        "SELECT * FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'control' 
+         ORDER BY timestamp DESC LIMIT 1000",
+    )
+    .bind(test_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get control metrics", err))?;
+
+    let treatment_metrics: Vec<AbTestMetric> = sqlx::query_as(
+        "SELECT * FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'treatment' 
+         ORDER BY timestamp DESC LIMIT 1000",
+    )
+    .bind(test_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get treatment metrics", err))?;
+
+    let control_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ab_test_assignments 
+         WHERE test_id = $1 AND variant_type = 'control'",
+    )
+    .bind(test_uuid)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| db_internal_error("count control", err))?;
+
+    let treatment_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ab_test_assignments 
+         WHERE test_id = $1 AND variant_type = 'treatment'",
+    )
+    .bind(test_uuid)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| db_internal_error("count treatment", err))?;
+
+    let control_mean: Option<Decimal> = sqlx::query_scalar(
+        "SELECT AVG(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'control' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get control mean", err))?;
+
+    let treatment_mean: Option<Decimal> = sqlx::query_scalar(
+        "SELECT AVG(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'treatment' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get treatment mean", err))?;
+
+    let control_std: Option<Decimal> = sqlx::query_scalar(
+        "SELECT STDDEV(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'control' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get control std", err))?;
+
+    let treatment_std: Option<Decimal> = sqlx::query_scalar(
+        "SELECT STDDEV(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'treatment' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get treatment std", err))?;
+
+    let control_n = control_metrics.len() as i64;
+    let treatment_n = treatment_metrics.len() as i64;
+
+    let p_value = if control_n >= 30 && treatment_n >= 30 {
+        if let (Some(c_mean), Some(t_mean), Some(c_std), Some(t_std)) =
+            (control_mean, treatment_mean, control_std, treatment_std)
+        {
+            let c_mean_f64 = c_mean.to_string().parse::<f64>().unwrap_or(0.0);
+            let t_mean_f64 = t_mean.to_string().parse::<f64>().unwrap_or(0.0);
+            let c_std_f64 = c_std.to_string().parse::<f64>().unwrap_or(0.0);
+            let t_std_f64 = t_std.to_string().parse::<f64>().unwrap_or(0.0);
+
+            let pooled_var = ((control_n - 1) as f64 * c_std_f64 * c_std_f64
+                + (treatment_n - 1) as f64 * t_std_f64 * t_std_f64)
+                / (control_n + treatment_n - 2) as f64;
+
+            if pooled_var > 0.0 {
+                let pooled_std = pooled_var.sqrt();
+                let se = pooled_std * (1.0 / control_n as f64 + 1.0 / treatment_n as f64).sqrt();
+                let t_stat = (t_mean_f64 - c_mean_f64) / se;
+
+                let p_val = 2.0 * (1.0 - normal_cdf_approx_f64(t_stat.abs()));
+                Decimal::from_str(&format!("{:.6}", p_val)).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let significance = p_value.and_then(|p| {
+        if p < Decimal::from_str("0.01").unwrap() {
+            Some(Decimal::from(99))
+        } else if p < Decimal::from_str("0.05").unwrap() {
+            Some(Decimal::from(95))
+        } else if p < Decimal::from_str("0.10").unwrap() {
+            Some(Decimal::from(90))
+        } else {
+            Some(Decimal::ZERO)
+        }
+    });
+
+    let winner = if let (Some(c_mean), Some(t_mean)) = (control_mean, treatment_mean) {
+        if t_mean > c_mean && significance.is_some() && significance.unwrap() >= test.significance_threshold {
+            Some("treatment")
+        } else if c_mean > t_mean && significance.is_some() && significance.unwrap() >= test.significance_threshold {
+            Some("control")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(serde_json::json!({
+        "test": test,
+        "control": {
+            "users": control_count,
+            "metrics_count": control_n,
+            "mean": control_mean,
+            "std_dev": control_std
+        },
+        "treatment": {
+            "users": treatment_count,
+            "metrics_count": treatment_n,
+            "mean": treatment_mean,
+            "std_dev": treatment_std
+        },
+        "statistics": {
+            "p_value": p_value,
+            "significance": significance,
+            "winner": winner
+        }
+    })))
+}
+
+fn normal_cdf_approx_f64(x: f64) -> f64 {
+    let sqrt_2 = 1.4142135623730951;
+    let erf_val = erf_approx_f64(x / sqrt_2);
+    0.5 * (1.0 + erf_val)
+}
+
+fn erf_approx_f64(x: f64) -> f64 {
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
+
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x_abs = x.abs();
+    let t = 1.0 / (1.0 + p * x_abs);
+    let y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * (-x_abs * x_abs).exp();
+    sign * y
+}
+
+pub async fn rollout_winning_variant(
+    State(state): State<AppState>,
+    Path(test_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let test_uuid = Uuid::parse_str(&test_id).map_err(|_| {
+        ApiError::bad_request("InvalidTestId", format!("Invalid test ID: {}", test_id))
+    })?;
+
+    let test: AbTest = sqlx::query_as("SELECT * FROM ab_tests WHERE id = $1")
+        .bind(test_uuid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "TestNotFound",
+                format!("Test not found: {}", test_id),
+            ),
+            _ => db_internal_error("get test", err),
+        })?;
+
+    let results = get_ab_test_results_internal(&state, test_uuid).await?;
+    let winner = results["statistics"]["winner"].as_str();
+
+    if winner.is_none() {
+        return Err(ApiError::bad_request(
+            "NoWinner",
+            "No statistically significant winner found",
+        ));
+    }
+
+    let winning_variant = winner.unwrap();
+    let deployment_id = if winning_variant == "treatment" {
+        test.variant_b_deployment_id
+    } else {
+        test.variant_a_deployment_id
+    };
+
+    let mut tx = state.db.begin().await.map_err(|err| {
+        db_internal_error("begin transaction for rollout", err)
+    })?;
+
+    sqlx::query(
+        "UPDATE ab_tests 
+         SET status = 'completed', ended_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(test_uuid)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("complete test", err))?;
+
+    sqlx::query(
+        "UPDATE contract_deployments 
+         SET status = 'active', activated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("activate deployment", err))?;
+
+    tx.commit().await.map_err(|err| {
+        db_internal_error("commit rollout", err)
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "test_id": test_id,
+        "winner": winning_variant,
+        "deployment_id": deployment_id,
+        "rolled_out": true
+    })))
+}
+
+async fn get_ab_test_results_internal(
+    state: &AppState,
+    test_uuid: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    let test: AbTest = sqlx::query_as("SELECT * FROM ab_tests WHERE id = $1")
+        .bind(test_uuid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "TestNotFound",
+                format!("Test not found: {}", test_uuid),
+            ),
+            _ => db_internal_error("get test", err),
+        })?;
+
+    let control_mean: Option<Decimal> = sqlx::query_scalar(
+        "SELECT AVG(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'control' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get control mean", err))?;
+
+    let treatment_mean: Option<Decimal> = sqlx::query_scalar(
+        "SELECT AVG(metric_value) FROM ab_test_metrics 
+         WHERE test_id = $1 AND variant_type = 'treatment' AND metric_name = $2",
+    )
+    .bind(test_uuid)
+    .bind(&test.primary_metric)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get treatment mean", err))?;
+
+    Ok(serde_json::json!({
+        "statistics": {
+            "winner": if let (Some(c), Some(t)) = (control_mean, treatment_mean) {
+                if t > c { Some("treatment") } else { Some("control") }
+            } else { None }
+        }
+    }))
 }

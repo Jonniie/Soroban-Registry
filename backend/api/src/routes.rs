@@ -64,3 +64,13 @@ pub fn canary_routes() -> Router<AppState> {
         .route("/api/canaries/:id/metrics", post(handlers::record_canary_metric))
         .route("/api/canaries/:id/users", post(handlers::assign_canary_users))
 }
+
+pub fn ab_test_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/ab-tests", post(handlers::create_ab_test))
+        .route("/api/ab-tests/:id/start", post(handlers::start_ab_test))
+        .route("/api/ab-tests/variant", post(handlers::get_variant))
+        .route("/api/ab-tests/metrics", post(handlers::record_ab_test_metric))
+        .route("/api/ab-tests/:id/results", get(handlers::get_ab_test_results))
+        .route("/api/ab-tests/:id/rollout", post(handlers::rollout_winning_variant))
+}
