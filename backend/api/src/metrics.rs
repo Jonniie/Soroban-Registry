@@ -12,8 +12,11 @@ macro_rules! counter_vec {
 macro_rules! histogram_vec {
     ($name:expr, $help:expr, $labels:expr) => {
         Lazy::new(|| {
-            HistogramVec::new(HistogramOpts::new($name, $help).buckets(LATENCY_BUCKETS.to_vec()), $labels)
-                .unwrap()
+            HistogramVec::new(
+                HistogramOpts::new($name, $help).buckets(LATENCY_BUCKETS.to_vec()),
+                $labels,
+            )
+            .unwrap()
         })
     };
 }
@@ -43,31 +46,61 @@ const LATENCY_BUCKETS: [f64; 14] = [
 ];
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
-pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> =
-    counter_vec!("http_requests_total", "Total HTTP requests", &["method", "path", "status"]);
-pub static HTTP_REQUEST_DURATION: Lazy<HistogramVec> =
-    histogram_vec!("http_request_duration_seconds", "HTTP request latency", &["method", "path"]);
-pub static HTTP_IN_FLIGHT: Lazy<IntGauge> = gauge!("http_requests_in_flight", "In-flight HTTP requests");
-pub static HTTP_REQUEST_SIZE: Lazy<HistogramVec> =
-    histogram_vec!("http_request_size_bytes", "HTTP request body size", &["method"]);
-pub static HTTP_RESPONSE_SIZE: Lazy<HistogramVec> =
-    histogram_vec!("http_response_size_bytes", "HTTP response body size", &["method"]);
+pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> = counter_vec!(
+    "http_requests_total",
+    "Total HTTP requests",
+    &["method", "path", "status"]
+);
+pub static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = histogram_vec!(
+    "http_request_duration_seconds",
+    "HTTP request latency",
+    &["method", "path"]
+);
+pub static HTTP_IN_FLIGHT: Lazy<IntGauge> =
+    gauge!("http_requests_in_flight", "In-flight HTTP requests");
+pub static HTTP_REQUEST_SIZE: Lazy<HistogramVec> = histogram_vec!(
+    "http_request_size_bytes",
+    "HTTP request body size",
+    &["method"]
+);
+pub static HTTP_RESPONSE_SIZE: Lazy<HistogramVec> = histogram_vec!(
+    "http_response_size_bytes",
+    "HTTP response body size",
+    &["method"]
+);
 
 // ── Contracts ───────────────────────────────────────────────────────────────
-pub static CONTRACTS_TOTAL: Lazy<IntGauge> = gauge!("contracts_total", "Total registered contracts");
-pub static CONTRACTS_PUBLISHED: Lazy<IntCounter> = counter!("contracts_published_total", "Contracts published");
-pub static CONTRACTS_VERIFIED: Lazy<IntCounter> = counter!("contracts_verified_total", "Contracts verified");
-pub static CONTRACTS_PER_PUBLISHER: Lazy<IntGaugeVec> =
-    gauge_vec!("contracts_per_publisher", "Contracts per publisher", &["publisher"]);
-pub static CONTRACT_DEPLOY_TOTAL: Lazy<IntCounter> = counter!("contract_deploy_total", "Contract deployments");
-pub static CONTRACT_DEPLOY_ERRORS: Lazy<IntCounter> =
-    counter!("contract_deploy_errors_total", "Failed contract deployments");
-pub static CONTRACT_STATE_READS: Lazy<IntCounter> = counter!("contract_state_reads_total", "State reads");
-pub static CONTRACT_STATE_WRITES: Lazy<IntCounter> = counter!("contract_state_writes_total", "State writes");
-pub static CONTRACT_SIZE_BYTES: Lazy<HistogramVec> =
-    histogram_vec!("contract_size_bytes", "Contract binary size", &["publisher"]);
-pub static CONTRACTS_BY_CATEGORY: Lazy<IntCounterVec> =
-    counter_vec!("contracts_by_category_total", "Contracts by category", &["category"]);
+pub static CONTRACTS_TOTAL: Lazy<IntGauge> =
+    gauge!("contracts_total", "Total registered contracts");
+pub static CONTRACTS_PUBLISHED: Lazy<IntCounter> =
+    counter!("contracts_published_total", "Contracts published");
+pub static CONTRACTS_VERIFIED: Lazy<IntCounter> =
+    counter!("contracts_verified_total", "Contracts verified");
+pub static CONTRACTS_PER_PUBLISHER: Lazy<IntGaugeVec> = gauge_vec!(
+    "contracts_per_publisher",
+    "Contracts per publisher",
+    &["publisher"]
+);
+pub static CONTRACT_DEPLOY_TOTAL: Lazy<IntCounter> =
+    counter!("contract_deploy_total", "Contract deployments");
+pub static CONTRACT_DEPLOY_ERRORS: Lazy<IntCounter> = counter!(
+    "contract_deploy_errors_total",
+    "Failed contract deployments"
+);
+pub static CONTRACT_STATE_READS: Lazy<IntCounter> =
+    counter!("contract_state_reads_total", "State reads");
+pub static CONTRACT_STATE_WRITES: Lazy<IntCounter> =
+    counter!("contract_state_writes_total", "State writes");
+pub static CONTRACT_SIZE_BYTES: Lazy<HistogramVec> = histogram_vec!(
+    "contract_size_bytes",
+    "Contract binary size",
+    &["publisher"]
+);
+pub static CONTRACTS_BY_CATEGORY: Lazy<IntCounterVec> = counter_vec!(
+    "contracts_by_category_total",
+    "Contracts by category",
+    &["category"]
+);
 
 // ── Verification ────────────────────────────────────────────────────────────
 pub static VERIFICATION_LATENCY: Lazy<HistogramVec> = Lazy::new(|| {
@@ -86,10 +119,15 @@ pub static VERIFICATION_FAILURE: Lazy<IntCounter> =
     counter!("verification_failure_total", "Failed verifications");
 
 // ── Database ────────────────────────────────────────────────────────────────
-pub static DB_QUERY_DURATION: Lazy<HistogramVec> =
-    histogram_vec!("db_query_duration_seconds", "Database query latency", &["query"]);
-pub static DB_CONNECTIONS_ACTIVE: Lazy<IntGauge> = gauge!("db_connections_active", "Active DB connections");
-pub static DB_CONNECTIONS_IDLE: Lazy<IntGauge> = gauge!("db_connections_idle", "Idle DB connections");
+pub static DB_QUERY_DURATION: Lazy<HistogramVec> = histogram_vec!(
+    "db_query_duration_seconds",
+    "Database query latency",
+    &["query"]
+);
+pub static DB_CONNECTIONS_ACTIVE: Lazy<IntGauge> =
+    gauge!("db_connections_active", "Active DB connections");
+pub static DB_CONNECTIONS_IDLE: Lazy<IntGauge> =
+    gauge!("db_connections_idle", "Idle DB connections");
 pub static DB_QUERY_ERRORS: Lazy<IntCounter> = counter!("db_query_errors_total", "DB query errors");
 pub static DB_TRANSACTIONS_TOTAL: Lazy<IntCounter> =
     counter!("db_transactions_total", "Total DB transactions");
@@ -102,23 +140,46 @@ pub static CACHE_EVICTIONS: Lazy<IntCounter> = counter!("cache_evictions_total",
 pub static CACHE_SIZE_BYTES: Lazy<IntGauge> = gauge!("cache_size_bytes", "Cache size in bytes");
 pub static CACHE_ENTRIES: Lazy<IntGauge> = gauge!("cache_entries", "Number of cached entries");
 
+// ── Resources ────────────────────────────────────────────────────────────────────
+pub static RESOURCE_RECORDINGS: Lazy<IntCounter> =
+    counter!("resource_recordings_total", "Resource usage recordings");
+pub static RESOURCE_ALERTS_FIRED: Lazy<IntCounter> =
+    counter!("resource_alerts_total", "Resource alerts fired");
+pub static RESOURCE_FORECAST_RUNS: Lazy<IntCounter> = counter!(
+    "resource_forecast_runs_total",
+    "Resource forecast computations"
+);
+
 // ── Migration ───────────────────────────────────────────────────────────────
 pub static MIGRATION_TOTAL: Lazy<IntCounter> = counter!("migration_total", "Total migrations");
-pub static MIGRATION_FAILURES: Lazy<IntCounter> = counter!("migration_failures_total", "Migration failures");
-pub static MIGRATION_DURATION: Lazy<HistogramVec> =
-    histogram_vec!("migration_duration_seconds", "Migration duration", &["status"]);
+pub static MIGRATION_FAILURES: Lazy<IntCounter> =
+    counter!("migration_failures_total", "Migration failures");
+pub static MIGRATION_DURATION: Lazy<HistogramVec> = histogram_vec!(
+    "migration_duration_seconds",
+    "Migration duration",
+    &["status"]
+);
 
 // ── Canary ──────────────────────────────────────────────────────────────────
-pub static CANARY_ACTIVE: Lazy<IntGauge> = gauge!("canary_deployments_active", "Active canary deployments");
-pub static CANARY_ROLLBACKS: Lazy<IntCounter> = counter!("canary_rollbacks_total", "Canary rollbacks");
-pub static CANARY_PROMOTIONS: Lazy<IntCounter> = counter!("canary_promotions_total", "Canary promotions");
+pub static CANARY_ACTIVE: Lazy<IntGauge> =
+    gauge!("canary_deployments_active", "Active canary deployments");
+pub static CANARY_ROLLBACKS: Lazy<IntCounter> =
+    counter!("canary_rollbacks_total", "Canary rollbacks");
+pub static CANARY_PROMOTIONS: Lazy<IntCounter> =
+    counter!("canary_promotions_total", "Canary promotions");
 
 // ── AB Test ─────────────────────────────────────────────────────────────────
 pub static AB_TESTS_ACTIVE: Lazy<IntGauge> = gauge!("ab_tests_active", "Active AB tests");
-pub static AB_TEST_IMPRESSIONS: Lazy<IntCounterVec> =
-    counter_vec!("ab_test_impressions_total", "AB test impressions", &["test_id", "variant"]);
-pub static AB_TEST_CONVERSIONS: Lazy<IntCounterVec> =
-    counter_vec!("ab_test_conversions_total", "AB test conversions", &["test_id", "variant"]);
+pub static AB_TEST_IMPRESSIONS: Lazy<IntCounterVec> = counter_vec!(
+    "ab_test_impressions_total",
+    "AB test impressions",
+    &["test_id", "variant"]
+);
+pub static AB_TEST_CONVERSIONS: Lazy<IntCounterVec> = counter_vec!(
+    "ab_test_conversions_total",
+    "AB test conversions",
+    &["test_id", "variant"]
+);
 
 // ── Multisig ────────────────────────────────────────────────────────────────
 pub static MULTISIG_PROPOSALS: Lazy<IntCounter> =
@@ -131,25 +192,36 @@ pub static MULTISIG_REJECTIONS: Lazy<IntCounter> =
     counter!("multisig_rejections_total", "Multisig proposals rejected");
 
 // ── System ──────────────────────────────────────────────────────────────────
-pub static PROCESS_START_TIME: Lazy<IntGauge> = gauge!("process_start_time_seconds", "Process start time");
+pub static PROCESS_START_TIME: Lazy<IntGauge> =
+    gauge!("process_start_time_seconds", "Process start time");
 pub static BUILD_INFO: Lazy<IntGaugeVec> =
     gauge_vec!("build_info", "Build information", &["version", "commit"]);
 
 // ── SLO ─────────────────────────────────────────────────────────────────────
-pub static SLO_ERROR_BUDGET: Lazy<GaugeVec> =
-    gauge_f64_vec!("slo_error_budget_remaining", "SLO error budget remaining", &["slo"]);
+pub static SLO_ERROR_BUDGET: Lazy<GaugeVec> = gauge_f64_vec!(
+    "slo_error_budget_remaining",
+    "SLO error budget remaining",
+    &["slo"]
+);
 pub static SLO_BURN_RATE: Lazy<GaugeVec> =
     gauge_f64_vec!("slo_burn_rate", "SLO burn rate", &["slo"]);
-pub static SLO_AVAILABILITY: Lazy<GaugeVec> =
-    gauge_f64_vec!("slo_availability", "Service availability ratio", &["window"]);
+pub static SLO_AVAILABILITY: Lazy<GaugeVec> = gauge_f64_vec!(
+    "slo_availability",
+    "Service availability ratio",
+    &["window"]
+);
 
 // ── Patch ───────────────────────────────────────────────────────────────────
-pub static PATCHES_CREATED: Lazy<IntCounter> = counter!("patches_created_total", "Security patches created");
-pub static PATCHES_APPLIED: Lazy<IntCounter> = counter!("patches_applied_total", "Security patches applied");
-pub static PATCHES_FAILED: Lazy<IntCounter> = counter!("patches_failed_total", "Security patches failed");
+pub static PATCHES_CREATED: Lazy<IntCounter> =
+    counter!("patches_created_total", "Security patches created");
+pub static PATCHES_APPLIED: Lazy<IntCounter> =
+    counter!("patches_applied_total", "Security patches applied");
+pub static PATCHES_FAILED: Lazy<IntCounter> =
+    counter!("patches_failed_total", "Security patches failed");
 
 // ── Publisher ───────────────────────────────────────────────────────────────
-pub static PUBLISHERS_TOTAL: Lazy<IntGauge> = gauge!("publishers_total", "Total registered publishers");
+pub static PUBLISHERS_TOTAL: Lazy<IntGauge> =
+    gauge!("publishers_total", "Total registered publishers");
 pub static PUBLISHER_REGISTRATIONS: Lazy<IntCounter> =
     counter!("publisher_registrations_total", "Publisher registrations");
 
@@ -184,6 +256,9 @@ pub fn register_all(r: &Registry) -> prometheus::Result<()> {
     r.register(Box::new(CACHE_EVICTIONS.clone()))?;
     r.register(Box::new(CACHE_SIZE_BYTES.clone()))?;
     r.register(Box::new(CACHE_ENTRIES.clone()))?;
+    r.register(Box::new(RESOURCE_RECORDINGS.clone()))?;
+    r.register(Box::new(RESOURCE_ALERTS_FIRED.clone()))?;
+    r.register(Box::new(RESOURCE_FORECAST_RUNS.clone()))?;
     r.register(Box::new(MIGRATION_TOTAL.clone()))?;
     r.register(Box::new(MIGRATION_FAILURES.clone()))?;
     r.register(Box::new(MIGRATION_DURATION.clone()))?;
@@ -263,8 +338,12 @@ mod tests {
     #[test]
     fn test_http_request_counter() {
         let r = fresh_registry();
-        HTTP_REQUESTS_TOTAL.with_label_values(&["GET", "/health", "200"]).inc();
-        HTTP_REQUESTS_TOTAL.with_label_values(&["GET", "/health", "200"]).inc();
+        HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/health", "200"])
+            .inc();
+        HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/health", "200"])
+            .inc();
         let out = gather_metrics(&r);
         assert!(out.contains("http_requests_total"));
     }

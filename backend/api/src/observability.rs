@@ -17,8 +17,8 @@ impl Observability {
         let registry = Registry::new_custom(Some("soroban".into()), None)?;
         metrics::register_all(&registry)?;
 
-        let otel_endpoint =
-            std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".into());
+        let otel_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:4317".into());
 
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -27,9 +27,10 @@ impl Observability {
 
         let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
             .with_batch_exporter(exporter, Tokio)
-            .with_resource(opentelemetry_sdk::Resource::new(vec![
-                KeyValue::new("service.name", "soroban-registry-api"),
-            ]))
+            .with_resource(opentelemetry_sdk::Resource::new(vec![KeyValue::new(
+                "service.name",
+                "soroban-registry-api",
+            )]))
             .build();
 
         let tracer = tracer_provider.tracer("soroban-registry");
@@ -44,7 +45,10 @@ impl Observability {
             .with(otel_layer)
             .init();
 
-        tracing::info!("Observability stack initialized (Prometheus + OTel → {})", otel_endpoint);
+        tracing::info!(
+            "Observability stack initialized (Prometheus + OTel → {})",
+            otel_endpoint
+        );
         Ok(Self { registry })
     }
 
@@ -62,7 +66,11 @@ mod tests {
         let registry = Registry::new_custom(Some("test".into()), None).unwrap();
         metrics::register_all(&registry).unwrap();
         let families = registry.gather();
-        assert!(families.len() >= 20, "expected ≥20 metric families, got {}", families.len());
+        assert!(
+            families.len() >= 20,
+            "expected ≥20 metric families, got {}",
+            families.len()
+        );
     }
 
     #[test]

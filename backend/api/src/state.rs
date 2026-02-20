@@ -1,8 +1,10 @@
-use std::time::Instant;
-use std::sync::Arc;
-use sqlx::PgPool;
+use crate::cache::{CacheConfig, CacheLayer};
+use crate::resource_tracking::ResourceManager;
 use prometheus::Registry;
-use crate::cache::{CacheLayer, CacheConfig};
+use sqlx::PgPool;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::time::Instant;
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -11,6 +13,7 @@ pub struct AppState {
     pub started_at: Instant,
     pub cache: Arc<CacheLayer>,
     pub registry: Registry,
+    pub resource_mgr: Arc<RwLock<ResourceManager>>,
 }
 
 impl AppState {
@@ -21,6 +24,7 @@ impl AppState {
             started_at: Instant::now(),
             cache: Arc::new(CacheLayer::new(config)),
             registry,
+            resource_mgr: Arc::new(RwLock::new(ResourceManager::new())),
         }
     }
 }
