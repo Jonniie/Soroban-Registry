@@ -3,9 +3,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
+
 use shared::{
-    Contract, ContractSearchParams, ContractVersion, PaginatedResponse, PublishRequest, Publisher,
-    VerifyRequest,
+    Contract, ContractSearchParams, ContractVersion, PaginatedResponse, PaginatedVersionResponse,
+    PublishRequest, Publisher, VersionPaginationParams, VerifyRequest,
 };
 use uuid::Uuid;
 
@@ -109,22 +110,91 @@ pub async fn get_contract(
     Ok(Json(contract))
 }
 
-/// Get contract version history
+// NEW — paginated version
 pub async fn get_contract_versions(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<ContractVersion>>, StatusCode> {
-    let versions: Vec<ContractVersion> = sqlx::query_as(
-        "SELECT * FROM contract_versions WHERE contract_id = $1 ORDER BY created_at DESC",
+    Query(params): Query<VersionPaginationParams>,
+) -> Result<Json<PaginatedVersionResponse>, (StatusCode, Json<serde_json::Value>)> {
+
+    // ── Validate params ──────────────────────────────────
+    if params.limit == 0 || params.limit > 100 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "INVALID_LIMIT",
+                "message": "limit must be between 1 and 100"
+            })),
+        ));
+    }
+    if params.offset < 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "INVALID_OFFSET",
+                "message": "offset must be 0 or greater"
+            })),
+        ));
+    }
+
+    // ── Check contract exists → 404 if not ───────────────
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM contracts WHERE id = $1)"
     )
     .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "DB_ERROR", "message": "Database error"}))
+    ))?;
+
+    if !exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "NOT_FOUND",
+                "message": format!("Contract {} not found", id)
+            })),
+        ));
+    }
+
+    // ── Fetch total count ────────────────────────────────
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contract_versions WHERE contract_id = $1"
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "DB_ERROR", "message": "Database error"}))
+    ))?;
+
+    // ── Fetch page ───────────────────────────────────────
+    let versions: Vec<ContractVersion> = sqlx::query_as(
+        "SELECT * FROM contract_versions
+         WHERE contract_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3"
+    )
+    .bind(id)
+    .bind(params.limit)
+    .bind(params.offset)
     .fetch_all(&state.db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|_| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "DB_ERROR", "message": "Database error"}))
+    ))?;
 
-    Ok(Json(versions))
+    Ok(Json(PaginatedVersionResponse {
+        items: versions,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
 }
-
 /// Publish a new contract
 pub async fn publish_contract(
     State(state): State<AppState>,
