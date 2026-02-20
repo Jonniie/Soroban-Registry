@@ -183,6 +183,7 @@ export function GraphContent() {
                     break;
                 case 'r':
                 case 'R':
+                    e.preventDefault();
                     g.resetZoom();
                     break;
                 case 'ArrowUp':
