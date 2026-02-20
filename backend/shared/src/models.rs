@@ -196,7 +196,7 @@ pub struct ContractSearchParams {
     pub limit: Option<i64>,
 }
 
-
+// Add to shared/src/lib.rs after ContractSearchParams
 
 /// Pagination params for contract versions (limit/offset style)
 #[derive(Debug, Clone, Serialize, Deserialize)]
