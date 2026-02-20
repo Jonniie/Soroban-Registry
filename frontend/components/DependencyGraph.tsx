@@ -331,7 +331,7 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
 
       nodeEls.call(drag as unknown as (selection: d3.Selection<SVGGElement, SimNode, SVGGElement, unknown>) => void);
 
-      // ── Tooltip on hover ──
+      // ── Tooltip + edge-hover highlight ──
       nodeEls.on("mouseenter", (event: MouseEvent, d) => {
         const svgRect = svgEl.getBoundingClientRect();
         setTooltip({
@@ -340,6 +340,33 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
           node: d.data,
           dependents: dependentCounts.get(d.id) ?? 0,
         });
+
+        // Skip edge dimming if a node is already selected (selection handles it)
+        if (!selectedNode) {
+          const connected = new Set<string>([d.id]);
+          linkEls.each(function (ld) {
+            const src = (ld.source as SimNode).id;
+            const tgt = (ld.target as SimNode).id;
+            if (src === d.id || tgt === d.id) {
+              connected.add(src);
+              connected.add(tgt);
+            }
+          });
+
+          linkEls
+            .attr("stroke-opacity", (ld) => {
+              const src = (ld.source as SimNode).id;
+              const tgt = (ld.target as SimNode).id;
+              return (src === d.id || tgt === d.id) ? 0.9 : 0.05;
+            })
+            .attr("stroke", (ld) => {
+              const src = (ld.source as SimNode).id;
+              const tgt = (ld.target as SimNode).id;
+              return (src === d.id || tgt === d.id) ? "#60a5fa" : "#374151";
+            });
+
+          nodeEls.attr("opacity", (nd) => connected.has(nd.id) ? 1 : 0.2);
+        }
       });
 
       nodeEls.on("mousemove", (event: MouseEvent) => {
@@ -347,7 +374,15 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         setTooltip((prev) => prev ? { ...prev, x: event.clientX - svgRect.left, y: event.clientY - svgRect.top } : null);
       });
 
-      nodeEls.on("mouseleave", () => setTooltip(null));
+      nodeEls.on("mouseleave", () => {
+        setTooltip(null);
+        if (!selectedNode) {
+          linkEls
+            .attr("stroke-opacity", isLargeGraph ? 0.35 : 0.6)
+            .attr("stroke", "#374151");
+          nodeEls.attr("opacity", 1);
+        }
+      });
 
       // ── Click: select node ──
       nodeEls.on("click", (event: MouseEvent, d) => {
