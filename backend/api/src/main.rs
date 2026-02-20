@@ -31,6 +31,9 @@ mod trust;
 mod health_monitor;
 mod migration_cli;
 mod validation;
+mod type_safety;
+mod type_safety_handlers;
+mod type_safety_routes;
 
 use anyhow::Result;
 use axum::http::{header, HeaderValue, Method};
@@ -107,6 +110,7 @@ async fn main() -> Result<()> {
         .merge(template_routes::template_routes())
         .merge(routes::observability_routes())
         .merge(residency_routes::residency_routes())
+        .merge(type_safety_routes::type_safety_routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_logger))
         .layer(middleware::from_fn_with_state(
