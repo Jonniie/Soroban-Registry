@@ -70,7 +70,7 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     // Pinned node IDs — their fx/fy are kept fixed in the simulation
-    const [pinnedNodes, setPinnedNodes] = useState<Set<string>>(new Set());
+    const [, setPinnedNodes] = useState<Set<string>>(new Set());
     const pinnedRef = useRef<Set<string>>(new Set());
 
     // ── Large-graph performance flags ─────────────────────────────────────────
