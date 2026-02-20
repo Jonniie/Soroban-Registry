@@ -123,7 +123,7 @@ impl Profiler {
                 let total: Duration = durations.iter().sum();
                 let count = durations.len() as u64;
                 let avg = if count > 0 {
-                    total / count
+                    Duration::from_nanos(total.as_nanos() as u64 / count)
                 } else {
                     Duration::ZERO
                 };

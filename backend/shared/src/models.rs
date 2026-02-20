@@ -762,12 +762,12 @@ pub enum AuditActionType {
 impl std::fmt::Display for AuditActionType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Self::ContractPublished  => "contract_published",
-            Self::MetadataUpdated    => "metadata_updated",
+            Self::ContractPublished => "contract_published",
+            Self::MetadataUpdated => "metadata_updated",
             Self::VerificationChanged => "verification_changed",
-            Self::PublisherChanged   => "publisher_changed",
-            Self::VersionCreated     => "version_created",
-            Self::Rollback           => "rollback",
+            Self::PublisherChanged => "publisher_changed",
+            Self::VersionCreated => "version_created",
+            Self::Rollback => "rollback",
         };
         write!(f, "{}", s)
     }
@@ -776,46 +776,46 @@ impl std::fmt::Display for AuditActionType {
 /// One immutable row in `contract_audit_log`.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ContractAuditLog {
-    pub id:          Uuid,
+    pub id: Uuid,
     pub contract_id: Uuid,
     pub action_type: AuditActionType,
-    pub old_value:   Option<serde_json::Value>,
-    pub new_value:   Option<serde_json::Value>,
-    pub changed_by:  String,
-    pub timestamp:   DateTime<Utc>,
+    pub old_value: Option<serde_json::Value>,
+    pub new_value: Option<serde_json::Value>,
+    pub changed_by: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// Full contract state captured at each audited change in `contract_snapshots`.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ContractSnapshot {
-    pub id:             Uuid,
-    pub contract_id:    Uuid,
+    pub id: Uuid,
+    pub contract_id: Uuid,
     pub version_number: i32,
-    pub snapshot_data:  serde_json::Value,
-    pub audit_log_id:   Uuid,
-    pub created_at:     DateTime<Utc>,
+    pub snapshot_data: serde_json::Value,
+    pub audit_log_id: Uuid,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A single field-level change between two snapshots.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldChange {
     pub field: String,
-    pub from:  serde_json::Value,
-    pub to:    serde_json::Value,
+    pub from: serde_json::Value,
+    pub to: serde_json::Value,
 }
 
 /// Response for GET /api/contracts/:id/versions/:v1/diff/:v2
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionDiff {
-    pub contract_id:  Uuid,
+    pub contract_id: Uuid,
     pub from_version: i32,
-    pub to_version:   i32,
+    pub to_version: i32,
     /// Fields present in v2 but not v1
-    pub added:        Vec<FieldChange>,
+    pub added: Vec<FieldChange>,
     /// Fields present in v1 but not v2
-    pub removed:      Vec<FieldChange>,
+    pub removed: Vec<FieldChange>,
     /// Fields present in both but with different values
-    pub modified:     Vec<FieldChange>,
+    pub modified: Vec<FieldChange>,
 }
 
 /// Request body for POST /api/contracts/:id/rollback/:snapshot_id
@@ -825,18 +825,52 @@ pub struct RollbackRequest {
     pub changed_by: String,
 }
 
+// Multisig deployment types
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MultisigPolicy {
+    pub id: Uuid,
+    pub name: String,
+    pub threshold: i32,
+    pub required_signatures: i32,
+    pub signer_addresses: Vec<String>,
+    pub expiry_seconds: i32,
+    pub created_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeployProposal {
+    pub id: Uuid,
+    pub contract_name: String,
+    pub contract_id: Uuid,
+    pub wasm_hash: String,
+    pub network: String,
+    pub description: Option<String>,
+    pub policy_id: Uuid,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+    pub proposer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProposalSignature {
+    pub id: Uuid,
+    pub proposal_id: Uuid,
+    pub signer_address: String,
+}
+
 /// Paginated response for audit log
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProposalWithSignatures {
     pub proposal: DeployProposal,
     pub policy: MultisigPolicy,
     pub signatures: Vec<ProposalSignature>,
-    /// How many more signatures are needed to reach the threshold
     pub signatures_needed: i32,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogPage {
-    pub items:       Vec<ContractAuditLog>,
-    pub total:       i64,
-    pub page:        i64,
+    pub items: Vec<ContractAuditLog>,
+    pub total: i64,
+    pub page: i64,
     pub total_pages: i64,
 }

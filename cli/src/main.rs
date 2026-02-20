@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod export;
 mod import;
+mod incident;
 mod manifest;
 mod multisig;
 mod patch;
@@ -162,6 +163,12 @@ pub enum Commands {
         action: PatchCommands,
     },
 
+    /// Incident response management
+    Incident {
+        #[command(subcommand)]
+        action: IncidentCommands,
+    },
+
     /// Multi-signature contract deployment workflow
     Multisig {
         #[command(subcommand)]
@@ -276,6 +283,27 @@ pub enum MultisigCommands {
     },
 }
 
+/// Sub-commands for the `incident` group
+#[derive(Debug, Subcommand)]
+pub enum IncidentCommands {
+    /// Trigger a new incident for a contract
+    Trigger {
+        /// On-chain contract ID
+        contract_id: String,
+        /// Incident severity (critical|high|medium|low)
+        #[arg(long)]
+        severity: String,
+    },
+    /// Update the state of an existing incident
+    Update {
+        /// Incident UUID returned by trigger
+        incident_id: String,
+        /// New state (detected|responding|contained|recovered|post_review)
+        #[arg(long)]
+        state: String,
+    },
+}
+
 /// Sub-commands for the `patch` group
 #[derive(Debug, Subcommand)]
 pub enum PatchCommands {
@@ -307,7 +335,7 @@ pub enum PatchCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum DepsCommands {
     /// List dependencies for a contract
     List {
@@ -393,6 +421,16 @@ async fn main() -> Result<()> {
             log::debug!("Command: history | search={:?} limit={}", search, limit);
             wizard::show_history(search.as_deref(), limit)?;
         }
+        Commands::Incident { action } => match action {
+            IncidentCommands::Trigger { contract_id, severity } => {
+                log::debug!("Command: incident trigger | contract_id={} severity={}", contract_id, severity);
+                commands::incident_trigger(&contract_id, &severity)?;
+            }
+            IncidentCommands::Update { incident_id, state } => {
+                log::debug!("Command: incident update | incident_id={} state={}", incident_id, state);
+                commands::incident_update(&incident_id, &state)?;
+            }
+        },
         Commands::Patch { action } => match action {
             PatchCommands::Create { version, hash, severity, rollout } => {
                 let sev = severity.parse::<Severity>()?;
@@ -407,6 +445,11 @@ async fn main() -> Result<()> {
                 log::debug!("Command: patch apply | contract_id={} patch_id={}", contract_id, patch_id);
                 commands::patch_apply(&cli.api_url, &contract_id, &patch_id).await?;
             }
+            PatchCommands::Deps { command } => match command {
+                DepsCommands::List { contract_id } => {
+                    commands::deps_list(&cli.api_url, &contract_id).await?;
+                }
+            },
         },
         Commands::Multisig { action } => match action {
             MultisigCommands::CreatePolicy { name, threshold, signers, expiry_secs, created_by } => {
@@ -487,11 +530,6 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Deps { command } => match command {
-            DepsCommands::List { contract_id } => {
-                commands::deps_list(&cli.api_url, &contract_id).await?;
-            }
-        },
     }
 
     Ok(())

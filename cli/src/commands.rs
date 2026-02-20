@@ -709,6 +709,9 @@ pub async fn profile(
         }
     }
 
+    Ok(())
+}
+
 pub async fn deps_list(api_url: &str, contract_id: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/contracts/{}/dependencies", api_url, contract_id);
@@ -865,7 +868,7 @@ pub async fn run_tests(
     }
 
     if let Some(junit_path) = junit_output {
-        test_framework::generate_junit_xml(&[result], Path::new(junit_path))?;
+        test_framework::generate_junit_xml(&[result.clone()], Path::new(junit_path))?;
         println!("\n{} JUnit XML report exported to: {}", "✓".green(), junit_path);
     }
 
@@ -886,3 +889,68 @@ pub async fn run_tests(
     Ok(())
 }
 
+pub fn incident_trigger(contract_id: &str, severity_str: &str) -> Result<()> {
+    use crate::incident::{IncidentManager, IncidentSeverity};
+
+    let severity = severity_str.parse::<IncidentSeverity>()?;
+    let mut mgr = IncidentManager::default();
+    let id = mgr.trigger(contract_id.to_string(), severity);
+
+    println!("\n{}", "Incident Triggered".bold().cyan());
+    println!("{}", "=".repeat(80).cyan());
+    println!("  {}: {}", "Incident ID".bold(), id);
+    println!("  {}: {}", "Contract".bold(), contract_id.bright_black());
+    println!(
+        "  {}: {}",
+        "Severity".bold(),
+        match severity {
+            IncidentSeverity::Critical => "CRITICAL".red().bold(),
+            IncidentSeverity::High => "HIGH".yellow().bold(),
+            IncidentSeverity::Medium => "MEDIUM".cyan(),
+            IncidentSeverity::Low => "LOW".normal(),
+        }
+    );
+    println!("  {}: Detected", "State".bold());
+
+    if mgr.is_halted(contract_id) {
+        println!(
+            "\n  {} {}",
+            "⚡ CIRCUIT BREAKER ENGAGED —".red().bold(),
+            format!("contract {} is now halted", contract_id).red()
+        );
+    }
+
+    println!(
+        "\n  {} To advance state:\n    soroban-registry incident update {} --state responding\n",
+        "→".bright_black(),
+        id
+    );
+
+    Ok(())
+}
+
+pub fn incident_update(incident_id_str: &str, state_str: &str) -> Result<()> {
+    use crate::incident::IncidentState;
+    use uuid::Uuid;
+
+    let id = incident_id_str
+        .parse::<Uuid>()
+        .map_err(|_| anyhow::anyhow!("invalid incident ID: {}", incident_id_str))?;
+    let new_state = state_str.parse::<IncidentState>()?;
+
+    println!("\n{}", "Incident Updated".bold().cyan());
+    println!("{}", "=".repeat(80).cyan());
+    println!("  {}: {}", "Incident ID".bold(), id);
+    println!("  {}: {}", "New State".bold(), new_state.to_string().green().bold());
+
+    if matches!(new_state, IncidentState::Recovered | IncidentState::PostReview) {
+        println!(
+            "\n  {} {}",
+            "✓".green(),
+            "Circuit breaker cleared — registry interactions for this contract resumed.".green()
+        );
+    }
+
+    println!();
+    Ok(())
+}

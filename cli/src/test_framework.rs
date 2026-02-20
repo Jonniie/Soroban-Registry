@@ -331,7 +331,7 @@ impl TestRunner {
         )))
     }
 
-    async fn execute_action(&self, action: &TestAction) -> Result<()> {
+    async fn execute_action(&mut self, action: &TestAction) -> Result<()> {
         match action.action.as_str() {
             "deploy" => {
                 tokio::time::sleep(Duration::from_millis(5)).await;
