@@ -10,7 +10,7 @@ mod test_framework;
 mod wizard;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use patch::Severity;
 
 /// Soroban Registry CLI — discover, publish, verify, and deploy Soroban contracts
@@ -18,16 +18,16 @@ use patch::Severity;
 #[command(name = "soroban-registry", version, about, long_about = None)]
 pub struct Cli {
     /// Registry API URL
-    #[arg(
-        long,
-        env = "SOROBAN_REGISTRY_API_URL",
-        default_value = "http://localhost:3001"
-    )]
-    pub api_url: String,
+    #[arg(long, env = "SOROBAN_REGISTRY_API_URL")]
+    pub api_url: Option<String>,
 
-    /// Stellar network to use (mainnet | testnet | futurenet). Defaults to mainnet.
+    /// Stellar network to use (mainnet | testnet | futurenet)
     #[arg(long, global = true)]
     pub network: Option<String>,
+
+    /// HTTP timeout in seconds
+    #[arg(long, global = true)]
+    pub timeout: Option<u64>,
 
     /// Enable verbose output (shows HTTP requests, responses, and debug info)
     #[arg(long, short = 'v', global = true)]
@@ -41,25 +41,11 @@ pub struct Cli {
 pub enum Commands {
     /// Search for contracts in the registry
     Search {
-        /// Search query text
-        #[arg(long)]
+        /// Search query
         query: String,
-
-        /// Filter by category (e.g. dex, token, nft)
-        #[arg(long)]
-        category: Option<String>,
-
         /// Only show verified contracts
         #[arg(long)]
         verified_only: bool,
-
-        /// Maximum number of results to return
-        #[arg(long, default_value = "10")]
-        limit: usize,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t = SearchFormat::Table)]
-        format: SearchFormat,
     },
 
     /// Get detailed information about a contract
@@ -68,81 +54,65 @@ pub enum Commands {
         contract_id: String,
     },
 
-    /// Publish a new contract to the registry
-    Publish {
-        /// On-chain contract ID
-        #[arg(long)]
-        contract_id: String,
+@@ -134,50 +134,57 @@ pub enum Commands {
 
-        /// Human-readable contract name
-        #[arg(long)]
-        name: String,
+    /// Generate documentation from a contract WASM
+    Doc {
+        /// Path to contract WASM file
+        contract_path: String,
 
-        /// Optional description
-        #[arg(long)]
-        description: Option<String>,
-
-        /// Contract category (e.g. token, defi, nft)
-        #[arg(long)]
-        category: Option<String>,
-@@ -195,50 +209,56 @@ pub enum Commands {
+        /// Output directory
+        #[arg(long, default_value = "docs")]
+        output: String,
     },
 
-    /// Run integration tests
-    Test {
-        /// Path to test file (YAML or JSON)
-        test_file: String,
+    /// Launch the interactive setup wizard
+    Wizard {},
 
-        /// Path to contract directory or file
+    /// Show command history
+    History {
+        /// Filter by search term
         #[arg(long)]
-        contract_path: Option<String>,
+        search: Option<String>,
 
-        /// Output JUnit XML report
-        #[arg(long)]
-        junit: Option<String>,
-
-        /// Show coverage report
-        #[arg(long, default_value = "true")]
-        coverage: bool,
-
-        /// Verbose output
-        #[arg(long, short)]
-        verbose: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum SearchFormat {
-    Json,
-    Table,
-}
-
-/// Sub-commands for the `multisig` group
-#[derive(Debug, Subcommand)]
-pub enum MultisigCommands {
-    /// Create a new multi-sig policy (defines signers and required threshold)
-    CreatePolicy {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        threshold: u32,
-        #[arg(long)]
-        signers: String,
-        #[arg(long)]
-        expiry_secs: Option<u32>,
-        #[arg(long)]
-        created_by: String,
+        /// Maximum number of entries to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
 
-    /// Create an unsigned deployment proposal
-    CreateProposal {
+    /// Manage CLI configuration
+    Config {
+        /// Open config file in your editor
         #[arg(long)]
-        contract_name: String,
+        edit: bool,
+    },
+
+    /// Security patch management
+    Patch {
+        #[command(subcommand)]
+        action: PatchCommands,
+    },
+
+    /// Multi-signature contract deployment workflow
+    Multisig {
+        #[command(subcommand)]
+        action: MultisigCommands,
+    },
+
+    /// Profile contract execution performance
+    Profile {
+        /// Path to contract file
+        contract_path: String,
+
+        /// Method to profile
         #[arg(long)]
-        contract_id: String,
+        method: Option<String>,
+
+        /// Output JSON file
         #[arg(long)]
-        wasm_hash: String,
-@@ -304,195 +324,309 @@ pub enum PatchCommands {
+        output: Option<String>,
+
+@@ -304,195 +311,312 @@ pub enum PatchCommands {
     Deps {
         #[command(subcommand)]
         command: DepsCommands,
@@ -173,42 +143,29 @@ async fn main() -> Result<()> {
         .init();
 
     log::debug!("Verbose mode enabled");
-    log::debug!("API URL: {}", cli.api_url);
+    let runtime_config = config::resolve_runtime_config(cli.network, cli.api_url, cli.timeout)?;
+    log::debug!("API URL: {}", runtime_config.api_base);
 
     // ── Resolve network ───────────────────────────────────────────────────────
-    let network = config::resolve_network(cli.network)?;
+    let network = runtime_config.network;
     log::debug!("Network: {:?}", network);
+    log::debug!("Timeout: {}s", runtime_config.timeout);
 
     match cli.command {
         Commands::Search {
             query,
-            category,
             verified_only,
-            limit,
-            format,
         } => {
             log::debug!(
-                "Command: search | query={:?} category={:?} verified_only={} limit={} format={:?}",
+                "Command: search | query={:?} verified_only={}",
                 query,
-                category,
-                verified_only,
-                limit,
-                format
+                verified_only
             );
-            commands::search(
-                &cli.api_url,
-                &query,
-                network,
-                category.as_deref(),
-                verified_only,
-                limit,
-                matches!(format, SearchFormat::Json),
-            )
-            .await?;
+            commands::search(&runtime_config.api_base, &query, network, verified_only).await?;
         }
         Commands::Info { contract_id } => {
             log::debug!("Command: info | contract_id={}", contract_id);
-            commands::info(&cli.api_url, &contract_id, network).await?;
+            commands::info(&runtime_config.api_base, &contract_id, network).await?;
         }
         Commands::Publish {
             contract_id,
@@ -228,7 +185,7 @@ async fn main() -> Result<()> {
                 tags_vec
             );
             commands::publish(
-                &cli.api_url,
+                &runtime_config.api_base,
                 &contract_id,
                 &name,
                 description.as_deref(),
@@ -241,7 +198,7 @@ async fn main() -> Result<()> {
         }
         Commands::List { limit } => {
             log::debug!("Command: list | limit={}", limit);
-            commands::list(&cli.api_url, limit, network).await?;
+            commands::list(&runtime_config.api_base, limit, network).await?;
         }
         Commands::Migrate {
             contract_id,
@@ -255,7 +212,14 @@ async fn main() -> Result<()> {
                 wasm,
                 dry_run
             );
-            commands::migrate(&cli.api_url, &contract_id, &wasm, simulate_fail, dry_run).await?;
+            commands::migrate(
+                &runtime_config.api_base,
+                &contract_id,
+                &wasm,
+                simulate_fail,
+                dry_run,
+            )
+            .await?;
         }
         Commands::Export {
             id,
@@ -263,7 +227,7 @@ async fn main() -> Result<()> {
             contract_dir,
         } => {
             log::debug!("Command: export | id={} output={}", id, output);
-            commands::export(&cli.api_url, &id, &output, &contract_dir).await?;
+            commands::export(&runtime_config.api_base, &id, &output, &contract_dir).await?;
         }
         Commands::Import {
             archive,
@@ -274,7 +238,7 @@ async fn main() -> Result<()> {
                 archive,
                 output_dir
             );
-            commands::import(&cli.api_url, &archive, network, &output_dir).await?;
+            commands::import(&runtime_config.api_base, &archive, network, &output_dir).await?;
         }
         Commands::Doc {
             contract_path,
@@ -289,7 +253,7 @@ async fn main() -> Result<()> {
         }
         Commands::Wizard {} => {
             log::debug!("Command: wizard");
-            wizard::run(&cli.api_url).await?;
+            wizard::run(&runtime_config.api_base).await?;
         }
         Commands::History { search, limit } => {
             log::debug!("Command: history | search={:?} limit={}", search, limit);
@@ -308,11 +272,12 @@ async fn main() -> Result<()> {
                     version,
                     rollout
                 );
-                commands::patch_create(&cli.api_url, &version, &hash, sev, rollout).await?;
+                commands::patch_create(&runtime_config.api_base, &version, &hash, sev, rollout)
+                    .await?;
             }
             PatchCommands::Notify { patch_id } => {
                 log::debug!("Command: patch notify | patch_id={}", patch_id);
-                commands::patch_notify(&cli.api_url, &patch_id).await?;
+                commands::patch_notify(&runtime_config.api_base, &patch_id).await?;
             }
             PatchCommands::Apply {
                 contract_id,
@@ -323,7 +288,7 @@ async fn main() -> Result<()> {
                     contract_id,
                     patch_id
                 );
-                commands::patch_apply(&cli.api_url, &contract_id, &patch_id).await?;
+                commands::patch_apply(&runtime_config.api_base, &contract_id, &patch_id).await?;
             }
         },
         Commands::Multisig { action } => match action {
@@ -343,7 +308,7 @@ async fn main() -> Result<()> {
                     signer_vec
                 );
                 multisig::create_policy(
-                    &cli.api_url,
+                    &runtime_config.api_base,
                     &name,
                     threshold,
                     signer_vec,
@@ -367,7 +332,7 @@ async fn main() -> Result<()> {
                     policy_id
                 );
                 multisig::create_proposal(
-                    &cli.api_url,
+                    &runtime_config.api_base,
                     &contract_name,
                     &contract_id,
                     &wasm_hash,
@@ -385,7 +350,7 @@ async fn main() -> Result<()> {
             } => {
                 log::debug!("Command: multisig sign | proposal_id={}", proposal_id);
                 multisig::sign_proposal(
-                    &cli.api_url,
+                    &runtime_config.api_base,
                     &proposal_id,
                     &signer,
                     signature_data.as_deref(),
@@ -394,11 +359,11 @@ async fn main() -> Result<()> {
             }
             MultisigCommands::Execute { proposal_id } => {
                 log::debug!("Command: multisig execute | proposal_id={}", proposal_id);
-                multisig::execute_proposal(&cli.api_url, &proposal_id).await?;
+                multisig::execute_proposal(&runtime_config.api_base, &proposal_id).await?;
             }
             MultisigCommands::Info { proposal_id } => {
                 log::debug!("Command: multisig info | proposal_id={}", proposal_id);
-                multisig::proposal_info(&cli.api_url, &proposal_id).await?;
+                multisig::proposal_info(&runtime_config.api_base, &proposal_id).await?;
             }
             MultisigCommands::ListProposals { status, limit } => {
                 log::debug!(
@@ -406,7 +371,8 @@ async fn main() -> Result<()> {
                     status,
                     limit
                 );
-                multisig::list_proposals(&cli.api_url, status.as_deref(), limit).await?;
+                multisig::list_proposals(&runtime_config.api_base, status.as_deref(), limit)
+                    .await?;
             }
         },
         Commands::Profile {
@@ -445,9 +411,16 @@ async fn main() -> Result<()> {
         }
         Commands::Deps { command } => match command {
             DepsCommands::List { contract_id } => {
-                commands::deps_list(&cli.api_url, &contract_id).await?;
+                commands::deps_list(&runtime_config.api_base, &contract_id).await?;
             }
         },
+        Commands::Config { edit } => {
+            if edit {
+                config::edit_config()?;
+            } else {
+                config::show_config()?;
+            }
+        }
     }
 
     Ok(())
