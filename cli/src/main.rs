@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod export;
+mod fuzz;
 mod import;
 mod manifest;
 mod multisig;
@@ -160,6 +161,36 @@ pub enum Commands {
     Multisig {
         #[command(subcommand)]
         action: MultisigCommands,
+    },
+
+    /// Fuzz test a contract to find edge cases and security vulnerabilities
+    Fuzz {
+        /// Path to contract WASM file
+        contract_path: String,
+
+        /// Duration to run the fuzzer (e.g., 60s, 5m, 1h)
+        #[arg(long, default_value = "60s")]
+        duration: String,
+
+        /// Timeout per function invocation (e.g., 5s)
+        #[arg(long, default_value = "5s")]
+        timeout: String,
+
+        /// Number of parallel fuzzing threads
+        #[arg(long, default_value = "4")]
+        threads: usize,
+
+        /// Maximum number of test cases to generate (0 = unlimited)
+        #[arg(long, default_value = "0")]
+        max_cases: u64,
+
+        /// Output directory for crash corpus and reports
+        #[arg(long, default_value = "fuzz-corpus")]
+        output: String,
+
+        /// Minimize crash inputs after finding failures
+        #[arg(long, default_value = "true")]
+        minimize: bool,
     },
 }
 
@@ -459,6 +490,27 @@ async fn main() -> Result<()> {
                 multisig::list_proposals(&cli.api_url, status.as_deref(), limit).await?;
             }
         },
+
+        Commands::Fuzz {
+            contract_path,
+            duration,
+            timeout,
+            threads,
+            max_cases,
+            output,
+            minimize,
+        } => {
+            fuzz::run_fuzzer(
+                &contract_path,
+                &duration,
+                &timeout,
+                threads,
+                max_cases,
+                &output,
+                minimize,
+            )
+            .await?;
+        }
     }
 
     Ok(())
