@@ -985,7 +985,3 @@ pub async fn run_tests(
 
     Ok(())
 }
-
- Soroban-Registry git:(feat/json-output-flag-8) git remote add upstream  https://github.com/ALIPHATICHYD/Soroban-Registry.git
-➜  Soroban-Registry git:(feat/json-output-flag-8) git remote add origin https://github.com/Chucks1093/Soroban-Registry.git  
-
