@@ -1,4 +1,4 @@
-import { MOCK_CONTRACTS, MOCK_EXAMPLES, MOCK_VERSIONS } from './mock-data';
+import { MOCK_CONTRACTS, MOCK_EXAMPLES, MOCK_VERSIONS, MOCK_TEMPLATES } from './mock-data';
 
 export interface Contract {
   id: string;
@@ -15,6 +15,17 @@ export interface Contract {
   updated_at: string;
   is_maintenance?: boolean;
   maturity?: 'alpha' | 'beta' | 'stable' | 'mature' | 'legacy';
+}
+
+export interface ContractHealth {
+  contract_id: string;
+  status: 'healthy' | 'warning' | 'critical';
+  last_activity: string;
+  security_score: number;
+  audit_date?: string;
+  total_score: number;
+  recommendations: string[];
+  updated_at: string;
 }
 
 export interface ContractVersion {
@@ -44,6 +55,14 @@ export interface PaginatedResponse<T> {
   page: number;
   page_size: number;
   total_pages: number;
+}
+
+export interface DependencyTreeNode {
+  contract_id: string;
+  name: string;
+  current_version: string;
+  constraint_to_parent: string;
+  dependencies: DependencyTreeNode[];
 }
 
 export interface ContractSearchParams {
@@ -78,15 +97,15 @@ export const api = {
       return new Promise((resolve) => {
         setTimeout(() => {
           let filtered = [...MOCK_CONTRACTS];
-          
+
           if (params?.query) {
             const q = params.query.toLowerCase();
-            filtered = filtered.filter(c => 
-              c.name.toLowerCase().includes(q) || 
+            filtered = filtered.filter(c =>
+              c.name.toLowerCase().includes(q) ||
               (c.description && c.description.toLowerCase().includes(q))
             );
           }
-          
+
           if (params?.category) {
             filtered = filtered.filter(c => c.category === params.category);
           }
@@ -102,7 +121,7 @@ export const api = {
             page_size: params?.page_size || 20,
             total_pages: 1
           });
-        }, 500); 
+        }, 500);
       });
     }
 
@@ -144,7 +163,7 @@ export const api = {
       return new Promise((resolve) => {
         setTimeout(() => {
           resolve(MOCK_EXAMPLES[id] || []);
-        }, 500); 
+        }, 500);
       });
     }
 
@@ -205,14 +224,20 @@ export const api = {
     return response.json();
   },
 
+  async getContractHealth(id: string): Promise<ContractHealth> {
+    const response = await fetch(apiUrl(`/api/contracts/${id}/health`));
+    if (!response.ok) throw new Error('Failed to fetch contract health');
+    return response.json();
+  },
+
   // Publisher endpoints
   async getPublisher(id: string): Promise<Publisher> {
     if (USE_MOCKS) {
       return Promise.resolve({
-          id: id,
-          stellar_address: 'G...',
-          username: 'Mock Publisher',
-          created_at: new Date().toISOString()
+        id: id,
+        stellar_address: 'G...',
+        username: 'Mock Publisher',
+        created_at: new Date().toISOString()
       });
     }
 
@@ -231,22 +256,63 @@ export const api = {
     return response.json();
   },
 
-  // Stats endpoint
   async getStats(): Promise<{ total_contracts: number; verified_contracts: number; total_publishers: number }> {
     if (USE_MOCKS) {
-       return Promise.resolve({
-           total_contracts: MOCK_CONTRACTS.length,
-           verified_contracts: MOCK_CONTRACTS.filter(c => c.is_verified).length,
-           total_publishers: 5
-       });
+      return Promise.resolve({
+        total_contracts: MOCK_CONTRACTS.length,
+        verified_contracts: MOCK_CONTRACTS.filter(c => c.is_verified).length,
+        total_publishers: 5
+      });
     }
 
     const response = await fetch(`${API_URL}/api/stats`);
     if (!response.ok) throw new Error('Failed to fetch stats');
     return response.json();
   },
+
+  // Graph endpoint
+  async getContractGraph(network?: string): Promise<GraphResponse> {
+    const queryParams = new URLSearchParams();
+    if (network) queryParams.append('network', network);
+    const qs = queryParams.toString();
+    const response = await fetch(apiUrl(`/api/contracts/graph${qs ? `?${qs}` : ''}`));
+    if (!response.ok) throw new Error('Failed to fetch contract graph');
+    return response.json();
+  },
 };
 
+export interface Template {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  category: string;
+  version: string;
+  install_count: number;
+  parameters: { name: string; type: string; default?: string; description?: string }[];
+  created_at: string;
+}
+
+
+export interface GraphNode {
+  id: string;
+  contract_id: string;
+  name: string;
+  network: 'mainnet' | 'testnet' | 'futurenet';
+  is_verified: boolean;
+  category?: string;
+  tags: string[];
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  dependency_type: string;
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 export interface ContractExample {
   id: string;
   contract_id: string;

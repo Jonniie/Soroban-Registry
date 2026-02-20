@@ -217,21 +217,27 @@ fn default_true() -> bool {
     true
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// BENCHMARK TYPES (stubs for compilation)
-// ═══════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────
+// Benchmark types
+// ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct BenchmarkRecord {
-    pub id: Uuid,
-    pub contract_id: Uuid,
-    pub method_name: String,
-    pub status: BenchmarkStatus,
-    pub created_at: DateTime<Utc>,
+/// Body for POST /contracts/:id/benchmarks
+#[derive(Debug, Deserialize)]
+pub struct RunBenchmarkRequest {
+    pub method: String,
+    pub iterations: i32,
+    pub version: Option<String>,
+    pub args_json: Option<serde_json::Value>,
+    #[serde(default = "default_alert_threshold")]
+    pub alert_threshold_pct: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "text")]
+fn default_alert_threshold() -> f64 {
+    10.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum BenchmarkStatus {
     Pending,
     Running,
@@ -239,52 +245,121 @@ pub enum BenchmarkStatus {
     Failed,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BenchmarkResponse {
-    pub benchmark: BenchmarkRecord,
-    pub runs: Vec<BenchmarkRun>,
+/// One row in `benchmark_records`
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BenchmarkRecord {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub contract_version: String,
+    pub method_name: String,
+    pub iterations: i32,
+    pub args_json: Option<serde_json::Value>,
+    pub status: BenchmarkStatus,
+    pub min_ms: f64,
+    pub max_ms: f64,
+    pub avg_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
+    pub stddev_ms: f64,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+/// One row in `benchmark_runs`
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct BenchmarkRun {
     pub id: Uuid,
     pub benchmark_id: Uuid,
     pub iteration: i32,
-    pub latency_ms: f64,
+    pub execution_time_ms: f64,
+    pub cpu_instructions: Option<i64>,
+    pub memory_bytes: Option<i64>,
+}
+
+/// One row in `performance_alerts`
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PerformanceAlert {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub method_name: String,
+    pub baseline_benchmark_id: Uuid,
+    pub current_benchmark_id: Uuid,
+    pub baseline_p95_ms: f64,
+    pub current_p95_ms: f64,
+    pub regression_pct: f64,
+    pub alert_threshold_pct: f64,
+    pub resolved: bool,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RunBenchmarkRequest {
-    pub method_name: String,
-    pub iterations: Option<i32>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BenchmarkTrendPoint {
-    pub date: DateTime<Utc>,
-    pub p95_latency: f64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+/// Comparison between current and previous benchmark
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkComparison {
-    pub baseline_p95: f64,
-    pub current_p95: f64,
-    pub regression_pct: f64,
+    pub previous_benchmark_id: Uuid,
+    pub previous_version: String,
+    pub previous_p95_ms: f64,
+    pub current_p95_ms: f64,
+    pub delta_ms: f64,
+    pub delta_pct: f64,
     pub is_regression: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Full benchmark response sent to client
+#[derive(Debug, Serialize)]
+pub struct BenchmarkResponse {
+    pub benchmark: BenchmarkRecord,
+    pub runs: Vec<BenchmarkRun>,
+    pub alert: Option<PerformanceAlert>,
+    pub comparison: Option<BenchmarkComparison>,
+}
+
+/// Point in a benchmark trend time-series
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct BenchmarkTrendPoint {
+    pub benchmark_id: Uuid,
+    pub version: String,
+    pub created_at: DateTime<Utc>,
+    pub p95_ms: f64,
+    pub avg_ms: f64,
+    pub min_ms: f64,
+    pub max_ms: f64,
+}
+
+/// Dashboard summary for a contract's benchmarks
+#[derive(Debug, Serialize)]
 pub struct ContractBenchmarkSummary {
     pub contract_id: Uuid,
     pub total_benchmarks: i64,
-    pub avg_p95_latency: f64,
+    pub methods_benchmarked: Vec<String>,
+    pub latest_benchmarks: Vec<BenchmarkRecord>,
+    pub active_alerts: Vec<PerformanceAlert>,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct PerformanceAlert {
-    pub id: Uuid,
-    pub benchmark_id: Uuid,
-    pub message: String,
-    pub created_at: DateTime<Utc>,
+// ─────────────────────────────────────────────────────────
+// Network Routing Types
+// ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RoutingStrategy {
+    Auto,
+    Manual(String),
+}
+
+impl std::fmt::Display for RoutingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoutingStrategy::Auto => write!(f, "auto"),
+            RoutingStrategy::Manual(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// Metadata for network selection criteria
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkCriteria {
+    pub id: String,
+    pub stability: f32, // 0.0 - 1.0
+    pub cost_multiplier: f32, 
+    pub latency_ms: u32,
 }

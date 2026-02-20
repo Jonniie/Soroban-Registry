@@ -4,6 +4,7 @@ members = [
     "indexer",
     "verifier",
     "shared",
+    "seeder",
 ]
 resolver = "2"
 
@@ -21,7 +22,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "rust_decimal"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -45,3 +46,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15"
+
+# Observability
+prometheus = { version = "0.13", features = ["process"] }
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+tracing-opentelemetry = "0.28"
+once_cell = "1.0"
