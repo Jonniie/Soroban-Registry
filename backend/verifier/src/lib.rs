@@ -14,10 +14,13 @@ pub async fn verify_contract(
     // 2. Generate WASM bytecode
     // 3. Hash the bytecode
     // 4. Compare with deployed_wasm_hash
-    
-    tracing::info!("Verification requested for contract with hash: {}", deployed_wasm_hash);
+
+    tracing::info!(
+        "Verification requested for contract with hash: {}",
+        deployed_wasm_hash
+    );
     tracing::warn!("Verification engine not yet implemented");
-    
+
     Ok(false)
 }
 
@@ -28,8 +31,10 @@ pub async fn compile_contract(_source_code: &str) -> Result<Vec<u8>, RegistryErr
     // - Write source to temp directory
     // - Run cargo build with soroban target
     // - Return compiled WASM bytes
-    
-    Err(RegistryError::Internal("Compilation not yet implemented".to_string()))
+
+    Err(RegistryError::Internal(
+        "Compilation not yet implemented".to_string(),
+    ))
 }
 
 #[cfg(test)]

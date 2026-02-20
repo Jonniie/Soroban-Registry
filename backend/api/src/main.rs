@@ -1,13 +1,24 @@
+mod aggregation;
+mod analytics;
+mod audit_handlers;
+mod audit_routes;
+mod benchmark_engine;
+mod benchmark_handlers;
+mod benchmark_routes;
 mod cache;
+mod checklist;
+mod detector;
 mod error;
 mod handlers;
+mod models;
 mod rate_limit;
 mod routes;
+mod scoring;
 mod state;
 
 use anyhow::Result;
 use axum::http::{header, HeaderValue, Method};
-use axum::{Router, middleware};
+use axum::{middleware, Router};
 use dotenv::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
@@ -46,6 +57,9 @@ async fn main() -> Result<()> {
 
     tracing::info!("Database connected and migrations applied");
 
+    // Spawn the hourly analytics aggregation background task
+    aggregation::spawn_aggregation_task(pool.clone());
+
     // Create app state
     let state = AppState::new(pool);
     let rate_limit_state = RateLimitState::from_env();
@@ -64,6 +78,8 @@ async fn main() -> Result<()> {
         .merge(routes::publisher_routes())
         .merge(routes::health_routes())
         .merge(routes::migration_routes())
+        .merge(audit_routes::audit_routes())
+        .merge(benchmark_routes::benchmark_routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_logger))
         .layer(middleware::from_fn_with_state(

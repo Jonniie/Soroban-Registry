@@ -57,6 +57,20 @@ services:
       - /app/node_modules
       - /app/.next
 
+  tagging-service:
+    build:
+      context: ./tagging-service
+      dockerfile: Dockerfile
+    container_name: soroban-registry-tagging
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/soroban_registry
+      PORT: "3002"
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   cargo_cache:
