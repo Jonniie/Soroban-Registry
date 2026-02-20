@@ -16,6 +16,7 @@ pub async fn search(
     query: &str,
     network: Network,
     verified_only: bool,
+	 json: bool,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let mut url = format!(
@@ -35,6 +36,20 @@ pub async fn search(
 
     let data: serde_json::Value = response.json().await?;
     let items = data["items"].as_array().context("Invalid response")?;
+
+	 if json {
+        let contracts: Vec<serde_json::Value> = items
+            .iter()
+            .map(|c| serde_json::json!({
+                "id":          c["contract_id"].as_str().unwrap_or(""),
+                "name":        c["name"].as_str().unwrap_or("Unknown"),
+                "is_verified": c["is_verified"].as_bool().unwrap_or(false),
+                "network":     c["network"].as_str().unwrap_or(""),
+            }))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "contracts": contracts }))?);
+        return Ok(());
+    }
 
     println!("\n{}", "Search Results:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());
@@ -145,14 +160,6 @@ pub async fn info(api_url: &str, contract_id: &str, network: Network) -> Result<
     Ok(())
 }
 
-fn resolve_smart_routing(current_network: Network) -> String {
-    if current_network.to_string() == "auto" {
-        "mainnet".to_string() 
-    } else {
-        current_network.to_string()
-    }
-}
-
 pub async fn publish(
     api_url: &str,
     contract_id: &str,
@@ -166,23 +173,17 @@ pub async fn publish(
     let client = reqwest::Client::new();
     let url = format!("{}/api/contracts", api_url);
 
-    let final_network = resolve_smart_routing(network);
-
     let payload = json!({
         "contract_id": contract_id,
         "name": name,
         "description": description,
-        "network": final_network,
+        "network": network.to_string(),
         "category": category,
         "tags": tags,
         "publisher_address": publisher,
-        "routing_mode": if network.to_string() == "auto" { "auto" } else { "manual" }
     });
 
     println!("\n{}", "Publishing contract...".bold().cyan());
-    if network.to_string() == "auto" {
-        println!("{} {}", "ℹ".blue(), format!("Auto-routing selected: {}", final_network).bright_black());
-    }
 
     let response = client
         .post(&url)
@@ -193,11 +194,6 @@ pub async fn publish(
 
     if !response.status().is_success() {
         let error_text = response.text().await?;
-        // FALLBACK LOGIC: If primary fails and we are in auto mode, try testnet
-        if network.to_string() == "auto" && final_network != "testnet" {
-            println!("{}", "⚠ Primary network unavailable. Attempting fallback...".yellow());
-            return Box::pin(publish(api_url, contract_id, name, description, Network::Testnet, category, tags, publisher)).await;
-        }
         anyhow::bail!("Failed to publish: {}", error_text);
     }
 
@@ -224,7 +220,7 @@ pub async fn publish(
     Ok(())
 }
 
-pub async fn list(api_url: &str, limit: usize, network: Network) -> Result<()> {
+pub async fn list(api_url: &str, limit: usize, network: Network, json: bool,) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!(
         "{}/api/contracts?page_size={}&network={}",
@@ -239,6 +235,20 @@ pub async fn list(api_url: &str, limit: usize, network: Network) -> Result<()> {
 
     let data: serde_json::Value = response.json().await?;
     let items = data["items"].as_array().context("Invalid response")?;
+
+	if json {
+        let contracts: Vec<serde_json::Value> = items
+            .iter()
+            .map(|c| serde_json::json!({
+                "id":          c["contract_id"].as_str().unwrap_or(""),
+                "name":        c["name"].as_str().unwrap_or("Unknown"),
+                "is_verified": c["is_verified"].as_bool().unwrap_or(false),
+                "network":     c["network"].as_str().unwrap_or(""),
+            }))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "contracts": contracts }))?);
+        return Ok(());
+    }
 
     println!("\n{}", "Recent Contracts:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());
@@ -465,7 +475,7 @@ pub async fn export(
 }
 
 pub async fn import(
-    _api_url: &str,
+    api_url: &str,
     archive: &str,
     network: Network,
     output_dir: &str,
@@ -975,4 +985,7 @@ pub async fn run_tests(
 
     Ok(())
 }
+
+ Soroban-Registry git:(feat/json-output-flag-8) git remote add upstream  https://github.com/ALIPHATICHYD/Soroban-Registry.git
+➜  Soroban-Registry git:(feat/json-output-flag-8) git remote add origin https://github.com/Chucks1093/Soroban-Registry.git  
 
