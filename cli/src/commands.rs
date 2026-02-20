@@ -11,6 +11,73 @@ pub enum Network {
     Mainnet,
     Testnet,
     Futurenet,
+use std::path::Path;
+
+use crate::patch::{PatchManager, Severity};
+use crate::profiler;
+use crate::sla::SlaManager;
+use crate::test_framework;
+
+pub async fn search(
+    api_url: &str,
+    query: &str,
+    network: Network,
+    verified_only: bool,
+) -> Result<()> {
+    let client = reqwest::Client::new();
+    let mut url = format!(
+        "{}/api/contracts?query={}&network={}",
+        api_url, query, network
+    );
+
+    if verified_only {
+        url.push_str("&verified_only=true");
+    }
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to search contracts")?;
+
+    let data: serde_json::Value = response.json().await?;
+    let items = data["items"].as_array().context("Invalid response")?;
+
+    println!("\n{}", "Search Results:".bold().cyan());
+    println!("{}", "=".repeat(80).cyan());
+
+    if items.is_empty() {
+        println!("{}", "No contracts found.".yellow());
+        return Ok(());
+    }
+
+    for contract in items {
+        let name = contract["name"].as_str().unwrap_or("Unknown");
+        let contract_id = contract["contract_id"].as_str().unwrap_or("");
+        let is_verified = contract["is_verified"].as_bool().unwrap_or(false);
+        let network = contract["network"].as_str().unwrap_or("");
+
+        println!("\n{} {}", "●".green(), name.bold());
+        println!("  ID: {}", contract_id.bright_black());
+        println!(
+            "  Status: {} | Network: {}",
+            if is_verified {
+                "✓ Verified".green()
+            } else {
+                "○ Unverified".yellow()
+            },
+            network.bright_blue()
+        );
+
+        if let Some(desc) = contract["description"].as_str() {
+            println!("  {}", desc.bright_black());
+        }
+    }
+
+    println!("\n{}", "=".repeat(80).cyan());
+    println!("Found {} contract(s)\n", items.len());
+
+    Ok(())
 }
 
 impl fmt::Display for Network {
@@ -37,6 +104,128 @@ impl FromStr for Network {
             ),
         }
     }
+
+    Ok(())
+}
+
+/// GET /api/contracts/:id/trust-score
+pub async fn trust_score(api_url: &str, contract_id: &str, network: Network) -> Result<()> {
+    let url = format!("{}/api/contracts/{}/trust-score", api_url, contract_id);
+    log::debug!("GET {}", url);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .query(&[("network", network.to_string())])
+        .send()
+        .await
+        .context("Failed to reach registry API")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to get trust score ({}): {}", status, body);
+    }
+
+    let data: serde_json::Value = resp.json().await.context("Failed to parse trust score response")?;
+
+    // ── Header ────────────────────────────────────────────────────────────────
+    let name       = data["contract_name"].as_str().unwrap_or("Unknown");
+    let score      = data["score"].as_f64().unwrap_or(0.0);
+    let badge      = data["badge"].as_str().unwrap_or("Bronze");
+    let badge_icon = data["badge_icon"].as_str().unwrap_or("🥉");
+    let summary    = data["summary"].as_str().unwrap_or("");
+
+    println!("\n{}", "─".repeat(56));
+    println!("  Trust Score — {}", name.bold());
+    println!("{}", "─".repeat(56));
+    println!("  Score : {:.0}/100", score);
+    println!("  Badge : {} {}", badge_icon, badge.bold());
+    println!("  {}",  summary);
+    println!("{}", "─".repeat(56));
+
+    // ── Factor breakdown ──────────────────────────────────────────────────────
+    println!("\n  {} Factor Breakdown\n", "📊".bold());
+
+    if let Some(factors) = data["factors"].as_array() {
+        for factor in factors {
+            let fname   = factor["name"].as_str().unwrap_or("");
+            let earned  = factor["points_earned"].as_f64().unwrap_or(0.0);
+            let max     = factor["points_max"].as_f64().unwrap_or(0.0);
+            let explain = factor["explanation"].as_str().unwrap_or("");
+
+            // Mini progress bar (10 chars)
+            let filled = ((earned / max) * 10.0).round() as usize;
+            let filled = filled.min(10);
+            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+
+            println!("  {:<28} [{bar}] {:.0}/{:.0}", fname, earned, max);
+            println!("    {}", explain.dimmed());
+        }
+    }
+
+    // ── Weight documentation ──────────────────────────────────────────────────
+    println!("\n  {} Score Weights\n", "⚖️".bold());
+    if let Some(weights) = data["weights"].as_object() {
+        for (k, v) in weights {
+            println!("  {:<22} {:.0} pts max", k, v.as_f64().unwrap_or(0.0));
+        }
+    }
+
+    let computed_at = data["computed_at"].as_str().unwrap_or("");
+    println!("\n  Computed at: {}\n", computed_at.dimmed());
+
+    Ok(())
+}
+
+pub async fn patch_notify(api_url: &str, patch_id: &str) -> Result<()> {
+    println!("\n{}", "Identifying vulnerable contracts...".bold().cyan());
+
+    let (patch, contracts) = PatchManager::find_vulnerable(api_url, patch_id).await?;
+
+    println!(
+        "\n{} {} patch for version {}",
+        "⚠".bold(),
+        severity_colored(&patch.severity),
+        patch.target_version.bold()
+    );
+    println!("{}", "=".repeat(80).cyan());
+
+    if contracts.is_empty() {
+        println!("{}", "No vulnerable contracts found.".green());
+        return Ok(());
+    }
+
+    for (i, c) in contracts.iter().enumerate() {
+        let cid = c["contract_id"].as_str().unwrap_or("");
+        let name = c["name"].as_str().unwrap_or("Unknown");
+        let net = c["network"].as_str().unwrap_or("");
+        println!(
+            "  {}. {} ({}) [{}]",
+            i + 1,
+            name.bold(),
+            cid.bright_black(),
+            net.bright_blue()
+        );
+    }
+
+    println!("\n{}", "=".repeat(80).cyan());
+    println!("{} vulnerable contract(s) found\n", contracts.len());
+
+    Ok(())
+}
+
+pub async fn patch_apply(api_url: &str, contract_id: &str, patch_id: &str) -> Result<()> {
+    println!("\n{}", "Applying security patch...".bold().cyan());
+
+    let audit = PatchManager::apply(api_url, contract_id, patch_id).await?;
+
+    println!("{}", "✓ Patch applied successfully!".green().bold());
+    println!("  {}: {}", "Contract".bold(), audit.contract_id);
+    println!("  {}: {}", "Patch".bold(), audit.patch_id);
+    println!("  {}: {}\n", "Applied At".bold(), audit.applied_at);
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -74,6 +263,117 @@ fn config_file_path() -> Option<PathBuf> {
         p.push(".soroban-registry.toml");
         p
     })
+
+pub async fn run_tests(
+    test_file: &str,
+    contract_path: Option<&str>,
+    junit_output: Option<&str>,
+    show_coverage: bool,
+    verbose: bool,
+) -> Result<()> {
+    let test_path = Path::new(test_file);
+    if !test_path.exists() {
+        anyhow::bail!("Test file not found: {}", test_file);
+    }
+
+    let contract_dir = contract_path.unwrap_or(".");
+    let mut runner = test_framework::TestRunner::new(contract_dir)?;
+
+    println!("\n{}", "Running Integration Tests...".bold().cyan());
+    println!("{}", "=".repeat(80).cyan());
+
+    let scenario = test_framework::load_test_scenario(test_path)?;
+    
+    if verbose {
+        println!("\n{}: {}", "Scenario".bold(), scenario.name);
+        if let Some(desc) = &scenario.description {
+            println!("{}: {}", "Description".bold(), desc);
+        }
+        println!("{}: {}", "Steps".bold(), scenario.steps.len());
+    }
+
+    let start_time = std::time::Instant::now();
+    let result = runner.run_scenario(scenario).await?;
+    let total_time = start_time.elapsed();
+
+    println!("\n{}", "Test Results:".bold().green());
+    println!("{}", "=".repeat(80).cyan());
+
+    let status_icon = if result.passed { "✓" } else { "✗" };
+    
+    println!(
+        "\n{} {} {} ({:.2}ms)",
+        status_icon,
+        "Scenario:".bold(),
+        result.scenario.bold(),
+        result.duration.as_secs_f64() * 1000.0
+    );
+
+    if !result.passed {
+        if let Some(ref err) = result.error {
+            println!("{} {}", "Error:".bold().red(), err);
+        }
+    }
+
+    println!("\n{}", "Step Results:".bold());
+    for (i, step) in result.steps.iter().enumerate() {
+        let step_icon = if step.passed { "✓" } else { "✗" };
+        
+        println!(
+            "  {}. {} {} ({:.2}ms)",
+            i + 1,
+            step_icon,
+            step.step_name.bold(),
+            step.duration.as_secs_f64() * 1000.0
+        );
+
+        if verbose {
+            println!(
+                "     Assertions: {}/{} passed",
+                step.assertions_passed,
+                step.assertions_passed + step.assertions_failed
+            );
+        }
+
+        if let Some(ref err) = step.error {
+            println!("     {}", err.red());
+        }
+    }
+
+    if show_coverage {
+        println!("\n{}", "Coverage Report:".bold().magenta());
+        println!("  Contracts Tested: {}", result.coverage.contracts_tested);
+        println!("  Methods Tested: {}/{}", 
+            result.coverage.methods_tested, 
+            result.coverage.total_methods
+        );
+        println!("  Coverage: {:.2}%", result.coverage.coverage_percent);
+        
+        if result.coverage.coverage_percent < 80.0 {
+            println!("  {} Low coverage detected!", "⚠".yellow());
+        }
+    }
+
+    if let Some(junit_path) = junit_output {
+        test_framework::generate_junit_xml(&[result.clone()], Path::new(junit_path))?;
+        println!("\n{} JUnit XML report exported to: {}", "✓".green(), junit_path);
+    }
+
+    if total_time.as_secs() > 5 {
+        println!("\n{} Test execution took {:.2}s (target: <5s)", 
+            "⚠".yellow(), 
+            total_time.as_secs_f64()
+        );
+    }
+
+    println!("\n{}", "=".repeat(80).cyan());
+    println!();
+
+    if !result.passed {
+        anyhow::bail!("Tests failed");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

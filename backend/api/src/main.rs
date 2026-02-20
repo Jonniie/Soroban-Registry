@@ -8,6 +8,31 @@ mod patch;
 mod profiler;
 mod test_framework;
 mod wizard;
+mod aggregation;
+mod analytics;
+mod audit_handlers;
+mod audit_routes;
+mod benchmark_engine;
+mod benchmark_handlers;
+mod benchmark_routes;
+mod cache;
+mod cache_benchmark;
+mod checklist;
+mod contract_history_handlers;
+mod contract_history_routes;
+mod detector;
+mod error;
+mod handlers;
+mod models;
+mod multisig_handlers;
+mod multisig_routes;
+mod popularity;
+mod rate_limit;
+mod routes;
+mod state;
+mod trust;
+mod health_monitor;
+mod migration_cli;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -104,6 +129,10 @@ pub enum Commands {
         /// Show coverage report
         #[arg(long, default_value = "true")]
         coverage: bool,
+    // Spawn background popularity scoring job (runs hourly)
+    popularity::spawn_popularity_task(pool.clone());
+    // Spawn the hourly analytics aggregation background task
+    aggregation::spawn_aggregation_task(pool.clone());
 
         /// Verbose output
         #[arg(long, short)]

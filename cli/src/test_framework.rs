@@ -331,7 +331,7 @@ impl TestRunner {
         )))
     }
 
-    async fn execute_action(&self, action: &TestAction) -> Result<()> {
+    async fn execute_action(&mut self, action: &TestAction) -> Result<()> {
         match action.action.as_str() {
             "deploy" => {
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -445,7 +445,7 @@ pub fn generate_junit_xml(results: &[TestResult], output_path: &Path) -> Result<
     ));
 
     for result in results {
-        let status = if result.passed { "pass" } else { "fail" };
+        let _status = if result.passed { "pass" } else { "fail" };
         xml.push_str(&format!(
             "    <testcase name=\"{}\" classname=\"contract-test\" time=\"{:.3}\">\n",
             result.scenario,

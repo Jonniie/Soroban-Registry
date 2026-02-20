@@ -266,8 +266,37 @@ export const api = {
     if (!response.ok) throw new Error('Failed to fetch stats');
     return response.json();
   },
+
+  // Graph endpoint
+  async getContractGraph(network?: string): Promise<GraphResponse> {
+    const queryParams = new URLSearchParams();
+    if (network) queryParams.append('network', network);
+    const qs = queryParams.toString();
+    const response = await fetch(apiUrl(`/api/contracts/graph${qs ? `?${qs}` : ''}`));
+    if (!response.ok) throw new Error('Failed to fetch contract graph');
+    return response.json();
+  },
 };
 
+export interface GraphNode {
+  id: string;
+  contract_id: string;
+  name: string;
+  network: 'mainnet' | 'testnet' | 'futurenet';
+  is_verified: boolean;
+  category?: string;
+  tags: string[];
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  dependency_type: string;
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 export interface ContractExample {
   id: string;
   contract_id: string;

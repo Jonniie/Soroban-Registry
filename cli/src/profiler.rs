@@ -123,7 +123,7 @@ impl Profiler {
                 let total: Duration = durations.iter().sum();
                 let count = durations.len() as u64;
                 let avg = if count > 0 {
-                    total / count
+                    total / count as u32
                 } else {
                     Duration::ZERO
                 };

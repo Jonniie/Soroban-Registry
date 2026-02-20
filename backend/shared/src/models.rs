@@ -28,6 +28,7 @@ pub struct Contract {
 /// Network where the contract is deployed
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "network_type", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum Network {
     Mainnet,
     Testnet,
@@ -90,6 +91,43 @@ pub struct ContractStats {
     pub total_interactions: i64,
     pub unique_users: i64,
     pub last_interaction: Option<DateTime<Utc>>,
+}
+
+/// Contract dependency relationship
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ContractDependency {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub depends_on_id: Uuid,
+    pub dependency_type: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Graph node (minimal contract info for graph rendering)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: Uuid,
+    pub contract_id: String,
+    pub name: String,
+    pub network: Network,
+    pub is_verified: bool,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+}
+
+/// Graph edge (dependency relationship)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub source: Uuid,
+    pub target: Uuid,
+    pub dependency_type: String,
+}
+
+/// Full graph response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphResponse {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
 }
 
 /// Request to publish a new contract
@@ -214,13 +252,28 @@ pub struct CreateMigrationRequest {
     pub wasm_hash: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+/// Request to update a migration's status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateMigrationStatusRequest {
+    pub status: MigrationStatus,
+    pub log_output: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "deployment_environment", rename_all = "lowercase")]
 pub enum DeploymentEnvironment {
     Blue,
     Green,
 }
 
+impl std::fmt::Display for DeploymentEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeploymentEnvironment::Blue => write!(f, "blue"),
+            DeploymentEnvironment::Green => write!(f, "green"),
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "deployment_status", rename_all = "lowercase")]
 pub enum DeploymentStatus {
@@ -694,6 +747,40 @@ pub struct HealthCheckRequest {
     pub passed: bool,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POPULARITY / TRENDING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Query parameters for the trending contracts endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendingParams {
+    /// Max results to return (default 10, max 50)
+    pub limit: Option<i64>,
+    /// Timeframe for trending calculation: "7d", "30d", "90d" (default "7d")
+    pub timeframe: Option<String>,
+}
+
+/// Response DTO for a trending contract
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct TrendingContract {
+    // Core contract fields
+    pub id: Uuid,
+    pub contract_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub network: Network,
+    pub is_verified: bool,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    // Popularity metrics
+    pub popularity_score: f64,
+    pub deployment_count: i64,
+    pub interaction_count: i64,
+}
+
+// MULTI-SIGNATURE DEPLOYMENT TYPES  (issue #47)
+// ═══════════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════════════
 // Audit Log & Version History types
 // ════════════════════════════════════════════════════════════════════════════
@@ -778,6 +865,13 @@ pub struct RollbackRequest {
 
 /// Paginated response for audit log
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposalWithSignatures {
+    pub proposal: DeployProposal,
+    pub policy: MultisigPolicy,
+    pub signatures: Vec<ProposalSignature>,
+    /// How many more signatures are needed to reach the threshold
+    pub signatures_needed: i32,
+}
 pub struct AuditLogPage {
     pub items:       Vec<ContractAuditLog>,
     pub total:       i64,
