@@ -107,8 +107,8 @@ pub async fn list_contracts(
 ) -> ApiResult<Json<PaginatedResponse<Contract>>> {
     let Query(params) = params.map_err(map_query_rejection)?;
     let page = params.page.unwrap_or(1).max(1);
-    let page_size = params.page_size.unwrap_or(20).min(100);
-    let offset = (page - 1) * page_size;
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = (page - 1) * limit;
 
     let sort_by = params.sort_by.clone().unwrap_or_else(|| {
         if params.query.is_some() {
@@ -178,7 +178,7 @@ pub async fn list_contracts(
     
     query.push_str(&format!(
         " ORDER BY {} {}, c.id DESC LIMIT {} OFFSET {}",
-        order_by, direction, page_size, offset
+        order_by, direction, limit, offset
     ));
 
     let contracts: Vec<Contract> = sqlx::query_as(&query)
@@ -191,7 +191,7 @@ pub async fn list_contracts(
         .await
         .map_err(|err| db_internal_error("count filtered contracts", err))?;
 
-    Ok(Json(PaginatedResponse::new(contracts, total, page, page_size)))
+    Ok(Json(PaginatedResponse::new(contracts, total, page, limit)))
 }
 
 /// Get a specific contract by ID

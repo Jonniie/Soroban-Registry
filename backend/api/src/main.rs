@@ -2,17 +2,28 @@ mod routes;
 mod handlers;
 mod error;
 mod state;
+mod rate_limit;
+mod aggregation;
+mod auth;
+mod auth_handlers;
+mod cache;
+mod metrics_handler;
+mod metrics;
+mod resource_handlers;
+mod resource_tracking;
 
 use anyhow::Result;
-use axum::http::{header, HeaderValue, Method};
 use axum::Router;
+use axum::http::{header, HeaderValue, Method};
 use dotenv::dotenv;
+use prometheus::Registry;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::state::AppState;
+use crate::rate_limit::RateLimitState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -45,7 +56,12 @@ async fn main() -> Result<()> {
     tracing::info!("Database connected and migrations applied");
 
     // Create app state
-    let state = AppState::new(pool);
+    let registry = Registry::new();
+    if let Err(e) = crate::metrics::register_all(&registry) {
+        tracing::error!("Failed to register metrics: {}", e);
+    }
+    let state = AppState::new(pool, registry);
+    let _rate_limit_state = RateLimitState::from_env();
 
     let cors = CorsLayer::new()
         .allow_origin([
