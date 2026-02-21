@@ -25,6 +25,7 @@ import { useQueryClient } from "@tanstack/react-query";
 const maintenanceStatus = { is_maintenance: false, current_window: null };
 
 
+
 function ContractDetailsContent() {
   const params = useParams();
   const id = params.id as string;
