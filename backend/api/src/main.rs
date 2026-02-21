@@ -4,6 +4,7 @@ mod error;
 mod state;
 mod rate_limit;
 mod aggregation;
+mod validation;
 // mod auth;
 // mod auth_handlers;
 mod cache;

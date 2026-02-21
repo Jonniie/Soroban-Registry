@@ -25,6 +25,36 @@ pub struct Contract {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub is_maintenance: bool,
+    /// Groups rows that represent the same logical contract across networks (Issue #43)
+    #[serde(default)]
+    pub logical_id: Option<Uuid>,
+    /// Per-network config: { "mainnet": { contract_id, is_verified, min_version, max_version }, ... }
+    #[serde(default)]
+    pub network_configs: Option<serde_json::Value>,
+}
+
+/// Response for GET /contracts/:id with optional network-specific slice (Issue #43)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractGetResponse {
+    #[serde(flatten)]
+    pub contract: Contract,
+    /// When ?network= is set, the requested network
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_network: Option<Network>,
+    /// When ?network= is set, that network's config slice
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_config: Option<NetworkConfig>,
+}
+
+/// Per-network config: address, verified status, min/max version (Issue #43)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    pub contract_id: String,
+    pub is_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_version: Option<String>,
 }
 
 /// Network where the contract is deployed
@@ -219,6 +249,8 @@ pub enum SortOrder {
 pub struct ContractSearchParams {
     pub query: Option<String>,
     pub network: Option<Network>,
+    /// Multiple networks filter (e.g. ?network=mainnet&network=testnet)
+    pub networks: Option<Vec<Network>>,
     pub verified_only: Option<bool>,
     pub category: Option<String>,
     pub tags: Option<Vec<String>>,

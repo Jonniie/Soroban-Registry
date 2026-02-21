@@ -5,6 +5,16 @@ import {
   MOCK_TEMPLATES,
 } from "./mock-data";
 
+export type Network = "mainnet" | "testnet" | "futurenet";
+
+/** Per-network config (Issue #43) */
+export interface NetworkConfig {
+  contract_id: string;
+  is_verified: boolean;
+  min_version?: string;
+  max_version?: string;
+}
+
 export interface Contract {
   id: string;
   contract_id: string;
@@ -12,7 +22,7 @@ export interface Contract {
   name: string;
   description?: string;
   publisher_id: string;
-  network: "mainnet" | "testnet" | "futurenet";
+  network: Network;
   is_verified: boolean;
   category?: string;
   tags: string[];
@@ -21,6 +31,16 @@ export interface Contract {
   created_at: string;
   updated_at: string;
   is_maintenance?: boolean;
+  /** Logical contract grouping (Issue #43) */
+  logical_id?: string;
+  /** Per-network configs: { mainnet: {...}, testnet: {...} } */
+  network_configs?: Record<Network, NetworkConfig>;
+}
+
+/** GET /contracts/:id response when ?network= is used (Issue #43) */
+export interface ContractGetResponse extends Contract {
+  current_network?: Network;
+  network_config?: NetworkConfig;
 }
 
 export interface ContractHealth {
@@ -254,7 +274,7 @@ export const api = {
     return data;
   },
 
-  async getContract(id: string): Promise<Contract> {
+  async getContract(id: string, network?: Network): Promise<ContractGetResponse> {
     if (USE_MOCKS) {
       return new Promise((resolve, reject) => {
         setTimeout(() => {
@@ -262,7 +282,7 @@ export const api = {
             (c) => c.id === id || c.contract_id === id,
           );
           if (contract) {
-            resolve(contract);
+            resolve(contract as ContractGetResponse);
           } else {
             reject(new Error("Contract not found"));
           }
@@ -270,7 +290,9 @@ export const api = {
       });
     }
 
-    const response = await fetch(`${API_URL}/api/contracts/${id}`);
+    const url = new URL(`${API_URL}/api/contracts/${id}`);
+    if (network) url.searchParams.set("network", network);
+    const response = await fetch(url.toString());
     if (!response.ok) throw new Error("Failed to fetch contract");
     return response.json();
   },
