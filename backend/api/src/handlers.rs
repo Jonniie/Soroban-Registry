@@ -274,10 +274,16 @@ pub async fn create_contract_version(
     .map_err(|err| db_internal_error("fetch contract versions", err))?;
 
     if !existing_versions.is_empty() {
-        let mut parsed: Vec<SemVer> = existing_versions
-            .iter()
-            .filter_map(|v| SemVer::parse(v))
-            .collect();
+        let mut parsed: Vec<SemVer> = Vec::with_capacity(existing_versions.len());
+        for version in &existing_versions {
+            let parsed_version = SemVer::parse(version).ok_or_else(|| {
+                ApiError::unprocessable(
+                    "InvalidExistingVersion",
+                    format!("Existing version '{}' is not valid semver", version),
+                )
+            })?;
+            parsed.push(parsed_version);
+        }
         parsed.sort();
         let latest_version = parsed.last().cloned();
 
