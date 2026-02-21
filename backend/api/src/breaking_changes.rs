@@ -434,16 +434,10 @@ async fn fetch_abi_by_contract_uuid_and_version(
         return Ok(abi.to_string());
     }
 
-    let abi = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT abi FROM contracts WHERE id = $1",
-    )
-    .bind(contract_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
-    .ok_or_else(|| ApiError::not_found("AbiNotFound", "No ABI available for requested version".to_string()))?;
-
-    Ok(abi.to_string())
+    Err(ApiError::not_found(
+        "AbiNotFound",
+        format!("No ABI available for contract version '{}'", version),
+    ))
 }
 
 pub fn has_breaking_changes(changes: &[BreakingChange]) -> bool {
