@@ -4,7 +4,7 @@ use axum::{
 };
 
 use crate::{
-    handlers, metrics_handler,
+    handlers, metrics_handler, breaking_changes,
     state::AppState,
 };
 
@@ -20,7 +20,8 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/graph", get(handlers::get_contract_graph))
         .route("/api/contracts/:id", get(handlers::get_contract))
         .route("/api/contracts/:id/abi", get(handlers::get_contract_abi))
-        .route("/api/contracts/:id/versions", get(handlers::get_contract_versions))
+        .route("/api/contracts/:id/versions", get(handlers::get_contract_versions).post(handlers::create_contract_version))
+        .route("/api/contracts/breaking-changes", get(breaking_changes::get_breaking_changes))
         .route("/api/contracts/:id/state/:key", get(handlers::get_contract_state).post(handlers::update_contract_state))
         .route("/api/contracts/:id/analytics", get(handlers::get_contract_analytics))
         .route("/api/contracts/:id/trust-score", get(handlers::get_trust_score))
