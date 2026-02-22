@@ -17,9 +17,10 @@ CREATE TABLE ab_tests (
     started_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
     created_by VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(contract_id, status) WHERE status = 'running'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX idx_ab_tests_one_running_per_contract ON ab_tests(contract_id, status) WHERE status = 'running';
 
 CREATE INDEX idx_ab_tests_contract_id ON ab_tests(contract_id);
 CREATE INDEX idx_ab_tests_status ON ab_tests(status);

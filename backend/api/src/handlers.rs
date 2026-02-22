@@ -9,10 +9,16 @@ use axum::{
 };
 use serde_json::{json, Value};
 use shared::{
-    Contract, ContractSearchParams, ContractVersion, CreateContractVersionRequest, PaginatedResponse, PublishRequest, Publisher,
+    Contract,ContractGetResponse, ContractSearchParams, ContractVersion, Network, NetworkConfig, CreateContractVersionRequest, PaginatedResponse, PublishRequest, Publisher,
     SemVer,
 };
 use uuid::Uuid;
+
+/// Query params for GET /contracts/:id (Issue #43)
+#[derive(Debug, serde::Deserialize)]
+pub struct GetContractQuery {
+    pub network: Option<Network>,
+}
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -146,6 +152,25 @@ pub async fn list_contracts(
         count_query.push_str(&category_clause);
     }
 
+    // Filter by network(s) (Issue #43)
+    let network_list = params
+        .networks
+        .as_ref()
+        .filter(|n| !n.is_empty())
+        .cloned()
+        .or_else(|| params.network.map(|n| vec![n]));
+    if let Some(ref nets) = network_list {
+        let net_list: Vec<String> = nets.iter().map(|n| n.to_string()).collect();
+        let in_clause = net_list
+            .iter()
+            .map(|s| format!("'{}'", s.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let network_clause = format!(" AND c.network IN ({})", in_clause);
+        query.push_str(&network_clause);
+        count_query.push_str(&network_clause);
+    }
+
     query.push_str(" GROUP BY c.id");
 
     // Sorting logic using aggregations in ORDER BY
@@ -197,11 +222,12 @@ pub async fn list_contracts(
     ).into_response()
 }
 
-/// Get a specific contract by ID
+/// Get a specific contract by ID. Optional ?network= returns network-specific config (Issue #43).
 pub async fn get_contract(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> ApiResult<Json<Contract>> {
+    Query(query): Query<GetContractQuery>,
+) -> ApiResult<Json<ContractGetResponse>> {
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",
@@ -209,7 +235,7 @@ pub async fn get_contract(
         )
     })?;
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
+    let mut contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -221,7 +247,29 @@ pub async fn get_contract(
             _ => db_internal_error("get contract by id", err),
         })?;
 
-    Ok(Json(contract))
+    let current_network = query.network;
+    let network_config = if let Some(ref net) = current_network {
+        let configs: Option<std::collections::HashMap<String, NetworkConfig>> = contract
+            .network_configs
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        let net_key = net.to_string();
+        let config = configs.and_then(|m| m.get(&net_key).cloned());
+        if let Some(ref cfg) = config {
+            contract.contract_id = cfg.contract_id.clone();
+            contract.is_verified = cfg.is_verified;
+            contract.network = net.clone();
+        }
+        config
+    } else {
+        None
+    };
+
+    Ok(Json(ContractGetResponse {
+        contract,
+        current_network,
+        network_config,
+    }))
 }
 
 pub async fn get_contract_versions(
@@ -387,6 +435,9 @@ pub async fn publish_contract(
 ) -> ApiResult<Json<Contract>> {
     let Json(req) = payload.map_err(map_json_rejection)?;
 
+    crate::validation::validate_contract_id(&req.contract_id)
+        .map_err(|e| ApiError::bad_request("InvalidContractId", e))?;
+
     let publisher: Publisher = sqlx::query_as(
         "INSERT INTO publishers (stellar_address) VALUES ($1)
          ON CONFLICT (stellar_address) DO UPDATE SET stellar_address = EXCLUDED.stellar_address
@@ -398,10 +449,22 @@ pub async fn publish_contract(
     .map_err(|err| db_internal_error("upsert publisher", err))?;
 
     let wasm_hash = "placeholder_hash".to_string();
+    let network_key = req.network.to_string();
+    let mut config_map = serde_json::Map::new();
+    config_map.insert(
+        network_key,
+        serde_json::json!({
+            "contract_id": req.contract_id,
+            "is_verified": false,
+            "min_version": null,
+            "max_version": null
+        }),
+    );
+    let network_configs = serde_json::Value::Object(config_map);
 
     let contract: Contract = sqlx::query_as(
-        "INSERT INTO contracts (contract_id, wasm_hash, name, description, publisher_id, network, category, tags)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "INSERT INTO contracts (contract_id, wasm_hash, name, description, publisher_id, network, category, tags, logical_id, network_configs)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *"
     )
     .bind(&req.contract_id)
@@ -412,9 +475,37 @@ pub async fn publish_contract(
     .bind(&req.network)
     .bind(&req.category)
     .bind(&req.tags)
+    .bind(Option::<Uuid>::None as Option<Uuid>)
+    .bind(&network_configs)
     .fetch_one(&state.db)
     .await
-    .map_err(|err| db_internal_error("create contract", err))?;
+    .map_err(|err| {
+        if let sqlx::Error::Database(ref e) = err {
+            if e.constraint().as_deref() == Some("contracts_contract_id_network_key") {
+                return ApiError::conflict(
+                    "ContractAlreadyRegistered",
+                    format!(
+                        "Contract {} is already registered for network {}",
+                        req.contract_id,
+                        req.network
+                    ),
+                );
+            }
+        }
+        db_internal_error("create contract", err)
+    })?;
+
+    // Set logical_id = id so this row is its own logical contract (Issue #43)
+    let _ = sqlx::query("UPDATE contracts SET logical_id = id WHERE id = $1")
+        .bind(contract.id)
+        .execute(&state.db)
+        .await;
+
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
+        .bind(contract.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| db_internal_error("fetch contract after insert", err))?;
 
     Ok(Json(contract))
 }

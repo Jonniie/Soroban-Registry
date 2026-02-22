@@ -62,7 +62,7 @@ pub enum Commands {
 
     /// Get detailed information about a contract
     Info {
-        /// Contract ID to look up
+        /// Contract registry UUID (use --network for network-specific config)
         contract_id: String,
     },
 

@@ -4,6 +4,7 @@ mod error;
 mod state;
 mod rate_limit;
 mod aggregation;
+mod validation;
 // mod auth;
 // mod auth_handlers;
 mod cache;
@@ -12,6 +13,7 @@ mod metrics;
 // mod resource_handlers;
 // mod resource_tracking;
 mod analytics;
+mod custom_metrics_handlers;
 mod breaking_changes;
 mod deprecation_handlers;
 

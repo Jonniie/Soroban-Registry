@@ -92,25 +92,33 @@ export function GraphContent() {
 
     const graphData = demoMode ? filteredDemoData : apiData;
 
+    // Safe nodes/edges (API may return missing or non-array values)
+    const nodes = useMemo(
+        () => (graphData && Array.isArray(graphData.nodes) ? graphData.nodes : []),
+        [graphData]
+    );
+    const edges = useMemo(
+        () => (graphData && Array.isArray(graphData.edges) ? graphData.edges : []),
+        [graphData]
+    );
+
     // Compute dependent counts (how many nodes depend on this one = in-edges)
     const dependentCounts = useMemo(() => {
-        if (!graphData) return new Map<string, number>();
         const counts = new Map<string, number>();
-        for (const edge of graphData.edges) {
+        for (const edge of edges) {
             counts.set(edge.target, (counts.get(edge.target) || 0) + 1);
         }
         return counts;
-    }, [graphData]);
+    }, [edges]);
 
     // Compute dependency counts (how many nodes this one depends on = out-edges)
     const dependencyCounts = useMemo(() => {
-        if (!graphData) return new Map<string, number>();
         const counts = new Map<string, number>();
-        for (const edge of graphData.edges) {
+        for (const edge of edges) {
             counts.set(edge.source, (counts.get(edge.source) || 0) + 1);
         }
         return counts;
-    }, [graphData]);
+    }, [edges]);
 
     const criticalCount = useMemo(() => {
         let count = 0;
@@ -121,7 +129,7 @@ export function GraphContent() {
     // Per-network node counts for the stats panel
     const networkCounts = useMemo(() => {
         const counts = { mainnet: 0, testnet: 0, futurenet: 0, other: 0 };
-        for (const node of (graphData?.nodes ?? [])) {
+        for (const node of nodes) {
             const n = node.network?.toLowerCase() ?? "";
             if (n === "mainnet") counts.mainnet++;
             else if (n === "testnet") counts.testnet++;
@@ -129,7 +137,7 @@ export function GraphContent() {
             else counts.other++;
         }
         return counts;
-    }, [graphData]);
+    }, [nodes]);
 
     const handleNodeClick = useCallback((node: GraphNode | null) => {
         setSelectedNode(node);
@@ -137,12 +145,12 @@ export function GraphContent() {
 
     // Search match navigation
     const searchMatches = useMemo(() => {
-        if (!searchQuery || !graphData) return [];
+        if (!searchQuery || nodes.length === 0) return [];
         const q = searchQuery.toLowerCase();
-        return graphData.nodes
+        return nodes
             .filter((n) => n.name.toLowerCase().includes(q) || n.contract_id.toLowerCase().includes(q))
             .map((n) => n.id);
-    }, [searchQuery, graphData]);
+    }, [searchQuery, nodes]);
 
     // Reset match index when query or matches change
     useEffect(() => {
@@ -213,10 +221,10 @@ export function GraphContent() {
 
     if (!demoMode && isLoading) {
         return (
-            <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+            <div className="flex items-center justify-center h-[calc(100vh-4rem)] bg-background">
                 <div className="text-center">
-                    <div className="inline-block w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
-                    <p className="text-gray-400 text-sm">Loading graph data…</p>
+                    <div className="inline-block w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4" />
+                    <p className="text-muted-foreground text-sm">Loading graph data…</p>
                 </div>
             </div>
         );
@@ -224,17 +232,17 @@ export function GraphContent() {
 
     if (!demoMode && error) {
         return (
-            <div className="relative h-[calc(100vh-4rem)] overflow-hidden">
+            <div className="relative h-[calc(100vh-4rem)] overflow-hidden bg-background">
                 <div className="absolute inset-0 flex items-center justify-center z-20">
-                    <div className="text-center bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-xl p-10 shadow-2xl max-w-md">
-                        <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-                        <h3 className="text-xl font-semibold text-white mb-2">Backend API unavailable</h3>
-                        <p className="text-gray-400 mb-6 text-sm">
+                    <div className="text-center bg-background/95 backdrop-blur-xl border border-border rounded-xl p-10 shadow-2xl max-w-md">
+                        <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+                        <h3 className="text-xl font-semibold text-foreground mb-2">Backend API unavailable</h3>
+                        <p className="text-muted-foreground mb-6 text-sm">
                             Could not load contract graph data. You can still explore the visualization using Demo Mode with synthetic data.
                         </p>
                         <button
                             onClick={() => setDemoMode(true)}
-                            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors inline-flex items-center gap-2"
+                            className="px-6 py-2.5 bg-primary hover:opacity-90 text-primary-foreground rounded-lg font-medium transition-opacity inline-flex items-center gap-2"
                         >
                             <Sparkles className="w-4 h-4" />
                             Enable Demo Mode
@@ -245,19 +253,19 @@ export function GraphContent() {
         );
     }
 
-    const nodes = graphData?.nodes ?? [];
-    const edges = graphData?.edges ?? [];
-
     return (
-        <div className="relative h-[calc(100vh-4rem)] overflow-hidden">
-            {/* Graph Canvas */}
-            <div className="w-full h-full bg-gray-900 dark:bg-gray-950 relative">
-                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                    <div className="text-center">
-                        <p className="text-lg font-medium mb-2">Contract Dependency Graph</p>
-                        <p className="text-sm">Loading contract graph data...</p>
-                    </div>
-                </div>
+        <div className="relative h-[calc(100vh-4rem)] overflow-hidden bg-background">
+            {/* Graph Canvas — render actual graph (empty when no data) */}
+            <div className="w-full h-full bg-muted/50 relative">
+                <DependencyGraph
+                    ref={graphRef}
+                    nodes={nodes}
+                    edges={edges}
+                    searchQuery={searchQuery}
+                    dependentCounts={dependentCounts}
+                    onNodeClick={handleNodeClick}
+                    selectedNode={selectedNode}
+                />
             </div>
 
             {/* Controls Overlay */}
@@ -291,16 +299,16 @@ export function GraphContent() {
 
             {/* Selected Node Panel */}
             {selectedNode && (
-                <div className="absolute bottom-4 left-4 z-30 w-80 bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-xl p-5 shadow-2xl">
+                <div className="absolute bottom-4 left-4 z-30 w-80 bg-background/95 backdrop-blur-xl border border-border rounded-xl p-5 shadow-2xl">
                     {/* Header */}
                     <div className="flex items-start justify-between mb-2">
                         <div className="flex-1 min-w-0 pr-2">
-                            <h3 className="font-semibold text-white text-base truncate">{selectedNode.name}</h3>
-                            <p className="text-[10px] text-gray-500 font-mono truncate mt-0.5">{selectedNode.contract_id}</p>
+                            <h3 className="font-semibold text-foreground text-base truncate">{selectedNode.name}</h3>
+                            <p className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">{selectedNode.contract_id}</p>
                         </div>
                         <button
                             onClick={() => setSelectedNode(null)}
-                            className="text-gray-500 hover:text-gray-200 transition-colors shrink-0 p-1 rounded hover:bg-gray-800 focus-visible:ring-1 focus-visible:ring-blue-500 focus:outline-none"
+                            className="text-muted-foreground hover:text-foreground transition-colors shrink-0 p-1 rounded hover:bg-muted focus-visible:ring-1 focus-visible:ring-primary focus:outline-none"
                             aria-label="Close panel"
                         >
                             <X className="w-4 h-4" />
@@ -309,44 +317,44 @@ export function GraphContent() {
 
                     {/* Stats row */}
                     <div className="grid grid-cols-3 gap-2 mb-3 mt-3">
-                        <div className="bg-gray-800/70 rounded-lg p-2 text-center">
-                            <div className="text-lg font-bold text-white">{dependentCounts.get(selectedNode.id) || 0}</div>
-                            <div className="text-[10px] text-gray-400">Dependents</div>
+                        <div className="bg-muted/70 rounded-lg p-2 text-center">
+                            <div className="text-lg font-bold text-foreground">{dependentCounts.get(selectedNode.id) || 0}</div>
+                            <div className="text-[10px] text-muted-foreground">Dependents</div>
                         </div>
-                        <div className="bg-gray-800/70 rounded-lg p-2 text-center">
-                            <div className="text-lg font-bold text-white">{dependencyCounts.get(selectedNode.id) || 0}</div>
-                            <div className="text-[10px] text-gray-400">Dependencies</div>
+                        <div className="bg-muted/70 rounded-lg p-2 text-center">
+                            <div className="text-lg font-bold text-foreground">{dependencyCounts.get(selectedNode.id) || 0}</div>
+                            <div className="text-[10px] text-muted-foreground">Dependencies</div>
                         </div>
-                        <div className="bg-gray-800/70 rounded-lg p-2 text-center">
-                            <div className={`text-sm font-bold ${selectedNode.is_verified ? 'text-green-400' : 'text-gray-500'}`}>
+                        <div className="bg-muted/70 rounded-lg p-2 text-center">
+                            <div className={`text-sm font-bold ${selectedNode.is_verified ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
                                 {selectedNode.is_verified ? '✓' : '—'}
                             </div>
-                            <div className="text-[10px] text-gray-400">Verified</div>
+                            <div className="text-[10px] text-muted-foreground">Verified</div>
                         </div>
                     </div>
 
                     {/* Details */}
                     <div className="space-y-1.5 text-sm">
                         <div className="flex justify-between">
-                            <span className="text-gray-400">Network</span>
-                            <span className={`font-medium ${selectedNode.network === 'mainnet' ? 'text-green-400' :
-                                selectedNode.network === 'testnet' ? 'text-blue-400' : 'text-purple-400'
+                            <span className="text-muted-foreground">Network</span>
+                            <span className={`font-medium ${selectedNode.network === 'mainnet' ? 'text-green-600 dark:text-green-400' :
+                                selectedNode.network === 'testnet' ? 'text-blue-600 dark:text-blue-400' : 'text-purple-600 dark:text-purple-400'
                                 }`}>{selectedNode.network}</span>
                         </div>
                         {selectedNode.category && (
                             <div className="flex justify-between">
-                                <span className="text-gray-400">Type</span>
-                                <span className="text-gray-200">{selectedNode.category}</span>
+                                <span className="text-muted-foreground">Type</span>
+                                <span className="text-foreground">{selectedNode.category}</span>
                             </div>
                         )}
                     </div>
 
                     {/* Tags */}
                     {selectedNode.tags.length > 0 && (
-                        <div className="pt-2 mt-2 border-t border-gray-800">
+                        <div className="pt-2 mt-2 border-t border-border">
                             <div className="flex flex-wrap gap-1">
                                 {selectedNode.tags.map((tag) => (
-                                    <span key={tag} className="px-1.5 py-0.5 bg-blue-900/40 text-blue-300 border border-blue-800/50 rounded text-[10px]">
+                                    <span key={tag} className="px-1.5 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded text-[10px]">
                                         {tag}
                                     </span>
                                 ))}
@@ -357,7 +365,7 @@ export function GraphContent() {
                     {/* Link */}
                     <a
                         href={`/contracts/${selectedNode.contract_id}`}
-                        className="mt-3 flex items-center justify-center gap-1.5 w-full py-1.5 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-700/50 text-blue-400 hover:text-blue-300 rounded-lg text-xs font-medium transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 focus:outline-none"
+                        className="mt-3 flex items-center justify-center gap-1.5 w-full py-1.5 bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary rounded-lg text-xs font-medium transition-colors focus-visible:ring-1 focus-visible:ring-primary focus:outline-none"
                     >
                         <ExternalLink className="w-3 h-3" />
                         View Contract Details
@@ -368,15 +376,15 @@ export function GraphContent() {
             {/* Empty State */}
             {!demoMode && nodes.length === 0 && !isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center z-20">
-                    <div className="text-center bg-gray-900/80 backdrop-blur-xl border border-gray-700/50 rounded-xl p-10">
-                        <Sparkles className="w-12 h-12 text-blue-400 mx-auto mb-4" />
-                        <h3 className="text-xl font-semibold text-white mb-2">No contracts yet</h3>
-                        <p className="text-gray-400 mb-4">
+                    <div className="text-center bg-background/90 backdrop-blur-xl border border-border rounded-xl p-10">
+                        <Sparkles className="w-12 h-12 text-primary mx-auto mb-4" />
+                        <h3 className="text-xl font-semibold text-foreground mb-2">No contracts yet</h3>
+                        <p className="text-muted-foreground mb-4">
                             Publish some contracts or enable Demo Mode to explore the graph
                         </p>
                         <button
                             onClick={() => setDemoMode(true)}
-                            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors"
+                            className="px-6 py-2.5 bg-primary hover:opacity-90 text-primary-foreground rounded-lg font-medium transition-opacity"
                         >
                             Enable Demo Mode
                         </button>
