@@ -1,6 +1,7 @@
 mod backup;
 mod commands;
 mod config;
+mod conversions;
 mod coverage;
 mod events;
 mod export;

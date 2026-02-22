@@ -1,0 +1,188 @@
+   Compiling soroban-registry-cli v0.1.0 (C:\Users\owner\Projects\Soroban-Registry\cli)
+warning: field `next_id` is never read
+   --> C:\Users\owner\Projects\Soroban-Registry\backend\contract_abi\src\openapi.rs:223:5
+    |
+221 | struct SchemaGenerator {
+    |        --------------- field in this struct
+222 |     schemas: BTreeMap<String, Schema>,
+223 |     next_id: usize,
+    |     ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `contract_abi` (lib) generated 1 warning
+warning: unused import: `std::path::PathBuf`
+ --> src\commands.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::profiler`
+  --> src\commands.rs:21:5
+   |
+21 | use crate::profiler;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::sla::SlaManager`
+  --> src\commands.rs:22:5
+   |
+22 | use crate::sla::SlaManager;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> src\formal_verification.rs:5:5
+  |
+5 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `DateTime`
+ --> src\package_signing.rs:3:14
+  |
+3 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^
+
+warning: unused imports: `Signature`, `Verifier`, and `VerifyingKey`
+ --> src\package_signing.rs:5:21
+  |
+5 | use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+  |                     ^^^^^^^^^                      ^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused variable: `api_url`
+   --> src\commands.rs:583:5
+    |
+583 |     api_url: &str,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_api_url`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+error[E0277]: the `?` operator can only be used in a closure that returns `Result` or `Option` (or another type that implements `FromResidual`)
+    --> src\commands.rs:1493:83
+     |
+1492 |                     .map(|p| {
+     |                          --- this function should return `Result` or `Option` to accept `?`
+1493 |                         let pname = crate::conversions::as_str(&p["name"], "name")?;
+     |                                                                                   ^ cannot use the `?` operator in a closure that returns `std::string::String`
+     |
+     = help: the trait `FromResidual<std::result::Result<Infallible, anyhow::Error>>` is not implemented for `std::string::String`
+
+error[E0277]: the `?` operator can only be used in a closure that returns `Result` or `Option` (or another type that implements `FromResidual`)
+    --> src\commands.rs:1494:93
+     |
+1492 |                     .map(|p| {
+     |                          --- this function should return `Result` or `Option` to accept `?`
+1493 |                         let pname = crate::conversions::as_str(&p["name"], "name")?;
+1494 |                         let ptype = crate::conversions::as_str(&p["type_name"], "type_name")?;
+     |                                                                                             ^ cannot use the `?` operator in a closure that returns `std::string::String`
+     |
+     = help: the trait `FromResidual<std::result::Result<Infallible, anyhow::Error>>` is not implemented for `std::string::String`
+
+error[E0277]: the `?` operator can only be used in a function that returns `Result` or `Option` (or another type that implements `FromResidual`)
+   --> src\commands.rs:834:73
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) {
+    |     ----------------------------------------------------------------------- this function should return `Result` or `Option` to accept `?`
+833 |         for (i, node) in nodes.iter().enumerate() {
+834 |             let name = crate::conversions::as_str(&node["name"], "name")?;
+    |                                                                         ^ cannot use the `?` operator in a function that returns `()`
+    |
+    = help: the trait `FromResidual<std::result::Result<Infallible, anyhow::Error>>` is not implemented for `()`
+help: consider adding return type
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) -> Result<(), Box<dyn std::error::Error>> {
+    |                                                                             +++++++++++++++++++++++++++++++++++++++++
+
+error[E0277]: the `?` operator can only be used in a function that returns `Result` or `Option` (or another type that implements `FromResidual`)
+   --> src\commands.rs:835:111
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) {
+    |     ----------------------------------------------------------------------- this function should return `Result` or `Option` to accept `?`
+...
+835 |             let constraint = crate::conversions::as_str(&node["constraint_to_parent"], "constraint_to_parent")?;
+    |                                                                                                               ^ cannot use the `?` operator in a function that returns `()`
+    |
+    = help: the trait `FromResidual<std::result::Result<Infallible, anyhow::Error>>` is not implemented for `()`
+help: consider adding return type
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) -> Result<(), Box<dyn std::error::Error>> {
+    |                                                                             +++++++++++++++++++++++++++++++++++++++++
+
+error[E0277]: the `?` operator can only be used in a function that returns `Result` or `Option` (or another type that implements `FromResidual`)
+   --> src\commands.rs:836:94
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) {
+    |     ----------------------------------------------------------------------- this function should return `Result` or `Option` to accept `?`
+...
+836 |             let contract_id = crate::conversions::as_str(&node["contract_id"], "contract_id")?;
+    |                                                                                              ^ cannot use the `?` operator in a function that returns `()`
+    |
+    = help: the trait `FromResidual<std::result::Result<Infallible, anyhow::Error>>` is not implemented for `()`
+help: consider adding return type
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) -> Result<(), Box<dyn std::error::Error>> {
+    |                                                                             +++++++++++++++++++++++++++++++++++++++++
+
+warning: unused variable: `line`
+   --> src\coverage.rs:146:33
+    |
+146 |                     if let Some(line) = trace.get("line").and_then(|l| l.as_u64()) {
+    |                                 ^^^^ help: if this is intentional, prefix it with an underscore: `_line`
+
+warning: unused variable: `i`
+   --> src\profiler.rs:221:10
+    |
+221 |     for (i, line) in lines.iter().enumerate() {
+    |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `idx`
+   --> src\profiler.rs:302:10
+    |
+302 |     for (idx, func) in sorted_functions.iter().take(30).enumerate() {
+    |          ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: unused variable: `field`
+   --> src\test_framework.rs:387:33
+    |
+387 |                 if let Some(ref field) = assertion.field {
+    |                                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_field`
+
+warning: unused variable: `contract_path`
+   --> src\main.rs:985:13
+    |
+985 |             contract_path,
+    |             ^^^^^^^^^^^^^ help: try ignoring the field: `contract_path: _`
+
+warning: unused variable: `method`
+   --> src\main.rs:986:13
+    |
+986 |             method,
+    |             ^^^^^^ help: try ignoring the field: `method: _`
+
+warning: unused variable: `output`
+   --> src\main.rs:987:13
+    |
+987 |             output,
+    |             ^^^^^^ help: try ignoring the field: `output: _`
+
+warning: unused variable: `flamegraph`
+   --> src\main.rs:988:13
+    |
+988 |             flamegraph,
+    |             ^^^^^^^^^^ help: try ignoring the field: `flamegraph: _`
+
+warning: unused variable: `compare`
+   --> src\main.rs:989:13
+    |
+989 |             compare,
+    |             ^^^^^^^ help: try ignoring the field: `compare: _`
+
+warning: unused variable: `recommendations`
+   --> src\main.rs:990:13
+    |
+990 |             recommendations,
+    |             ^^^^^^^^^^^^^^^ help: try ignoring the field: `recommendations: _`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `soroban-registry-cli` (bin "soroban-registry") generated 17 warnings
+error: could not compile `soroban-registry-cli` (bin "soroban-registry") due to 5 previous errors; 17 warnings emitted

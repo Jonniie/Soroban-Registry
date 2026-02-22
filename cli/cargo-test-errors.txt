@@ -1,0 +1,523 @@
+warning: field `next_id` is never read
+   --> C:\Users\owner\Projects\Soroban-Registry\backend\contract_abi\src\openapi.rs:223:5
+    |
+221 | struct SchemaGenerator {
+    |        --------------- field in this struct
+222 |     schemas: BTreeMap<String, Schema>,
+223 |     next_id: usize,
+    |     ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `contract_abi` (lib) generated 1 warning
+   Compiling soroban-registry-cli v0.1.0 (C:\Users\owner\Projects\Soroban-Registry\cli)
+error[E0428]: the name `tests` is defined multiple times
+    --> src\commands.rs:1258:1
+     |
+166  | mod tests {
+     | --------- previous definition of the module `tests` here
+...
+1258 | mod tests {
+     | ^^^^^^^^^ `tests` redefined here
+     |
+     = note: `tests` must be defined only once in the type namespace of this module
+
+warning: unused import: `std::path::PathBuf`
+ --> src\commands.rs:7:5
+  |
+7 | use std::path::PathBuf;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::profiler`
+  --> src\commands.rs:21:5
+   |
+21 | use crate::profiler;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::sla::SlaManager`
+  --> src\commands.rs:22:5
+   |
+22 | use crate::sla::SlaManager;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Write`
+    --> src\commands.rs:1260:9
+     |
+1260 |     use std::io::Write;
+     |         ^^^^^^^^^^^^^^
+
+warning: unused import: `tempfile::NamedTempFile`
+    --> src\commands.rs:1261:9
+     |
+1261 |     use tempfile::NamedTempFile;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> src\formal_verification.rs:5:5
+  |
+5 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `DateTime`
+ --> src\package_signing.rs:3:14
+  |
+3 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^
+
+warning: unused imports: `Signature`, `Verifier`, and `VerifyingKey`
+ --> src\package_signing.rs:5:21
+  |
+5 | use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+  |                     ^^^^^^^^^                      ^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused variable: `api_url`
+   --> src\commands.rs:583:5
+    |
+583 |     api_url: &str,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_api_url`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `is_last`
+   --> src\commands.rs:832:62
+    |
+832 |     fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) -> Result<()> {
+    |                                                              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_last`
+
+warning: unused variable: `line`
+   --> src\coverage.rs:146:33
+    |
+146 |                     if let Some(line) = trace.get("line").and_then(|l| l.as_u64()) {
+    |                                 ^^^^ help: if this is intentional, prefix it with an underscore: `_line`
+
+warning: unused variable: `i`
+   --> src\profiler.rs:221:10
+    |
+221 |     for (i, line) in lines.iter().enumerate() {
+    |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `idx`
+   --> src\profiler.rs:302:10
+    |
+302 |     for (idx, func) in sorted_functions.iter().take(30).enumerate() {
+    |          ^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: unused variable: `field`
+   --> src\test_framework.rs:387:33
+    |
+387 |                 if let Some(ref field) = assertion.field {
+    |                                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_field`
+
+warning: unused variable: `contract_path`
+   --> src\main.rs:985:13
+    |
+985 |             contract_path,
+    |             ^^^^^^^^^^^^^ help: try ignoring the field: `contract_path: _`
+
+warning: unused variable: `method`
+   --> src\main.rs:986:13
+    |
+986 |             method,
+    |             ^^^^^^ help: try ignoring the field: `method: _`
+
+warning: unused variable: `output`
+   --> src\main.rs:987:13
+    |
+987 |             output,
+    |             ^^^^^^ help: try ignoring the field: `output: _`
+
+warning: unused variable: `flamegraph`
+   --> src\main.rs:988:13
+    |
+988 |             flamegraph,
+    |             ^^^^^^^^^^ help: try ignoring the field: `flamegraph: _`
+
+warning: unused variable: `compare`
+   --> src\main.rs:989:13
+    |
+989 |             compare,
+    |             ^^^^^^^ help: try ignoring the field: `compare: _`
+
+warning: unused variable: `recommendations`
+   --> src\main.rs:990:13
+    |
+990 |             recommendations,
+    |             ^^^^^^^^^^^^^^^ help: try ignoring the field: `recommendations: _`
+
+warning: struct `CreateBackupRequest` is never constructed
+ --> src\backup.rs:5:8
+  |
+5 | struct CreateBackupRequest {
+  |        ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: multiple fields are never read
+  --> src\backup.rs:11:5
+   |
+10 | struct ContractBackup {
+   |        -------------- fields in this struct
+11 |     id: String,
+   |     ^^
+12 |     contract_id: String,
+   |     ^^^^^^^^^^^
+13 |     backup_date: String,
+   |     ^^^^^^^^^^^
+14 |     wasm_hash: String,
+   |     ^^^^^^^^^
+15 |     storage_size_bytes: i64,
+   |     ^^^^^^^^^^^^^^^^^^
+16 |     verified: bool,
+   |     ^^^^^^^^
+17 |     primary_region: String,
+   |     ^^^^^^^^^^^^^^
+18 |     backup_regions: Vec<String>,
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `ContractBackup` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: struct `RestoreBackupRequest` is never constructed
+  --> src\backup.rs:22:8
+   |
+22 | struct RestoreBackupRequest {
+   |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `id`, `restore_duration_ms`, `success`, and `restored_at` are never read
+  --> src\backup.rs:28:5
+   |
+27 | struct BackupRestoration {
+   |        ----------------- fields in this struct
+28 |     id: String,
+   |     ^^
+29 |     restore_duration_ms: i32,
+   |     ^^^^^^^^^^^^^^^^^^^
+30 |     success: bool,
+   |     ^^^^^^^
+31 |     restored_at: String,
+   |     ^^^^^^^^^^^
+   |
+   = note: `BackupRestoration` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: function `create_backup` is never used
+  --> src\backup.rs:34:14
+   |
+34 | pub async fn create_backup(api_url: &str, contract_id: &str, include_state: bool) -> Result<()> {
+   |              ^^^^^^^^^^^^^
+
+warning: function `list_backups` is never used
+  --> src\backup.rs:51:14
+   |
+51 | pub async fn list_backups(api_url: &str, contract_id: &str) -> Result<()> {
+   |              ^^^^^^^^^^^^
+
+warning: function `restore_backup` is never used
+  --> src\backup.rs:72:14
+   |
+72 | pub async fn restore_backup(api_url: &str, contract_id: &str, backup_date: &str) -> Result<()> {
+   |              ^^^^^^^^^^^^^^
+
+warning: function `verify_backup` is never used
+   --> src\backup.rs:100:14
+    |
+100 | pub async fn verify_backup(api_url: &str, contract_id: &str, backup_date: &str) -> Result<()> {
+    |              ^^^^^^^^^^^^^
+
+warning: function `backup_stats` is never used
+   --> src\backup.rs:114:14
+    |
+114 | pub async fn backup_stats(api_url: &str, contract_id: &str) -> Result<()> {
+    |              ^^^^^^^^^^^^
+
+warning: function `resolve_smart_routing` is never used
+   --> src\commands.rs:219:4
+    |
+219 | fn resolve_smart_routing(current_network: Network) -> String {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `migrate` is never used
+   --> src\commands.rs:415:14
+    |
+415 | pub async fn migrate(
+    |              ^^^^^^^
+
+warning: function `trust_score` is never used
+   --> src\commands.rs:685:14
+    |
+685 | pub async fn trust_score(api_url: &str, contract_id: &str, network: Network) -> Result<()> {
+    |              ^^^^^^^^^^^
+
+warning: function `validate_call` is never used
+    --> src\commands.rs:1277:14
+     |
+1277 | pub async fn validate_call(
+     |              ^^^^^^^^^^^^^
+
+warning: function `generate_bindings` is never used
+    --> src\commands.rs:1385:14
+     |
+1385 | pub async fn generate_bindings(
+     |              ^^^^^^^^^^^^^^^^^
+
+warning: function `list_functions` is never used
+    --> src\commands.rs:1432:14
+     |
+1432 | pub async fn list_functions(api_url: &str, contract_id: &str) -> Result<()> {
+     |              ^^^^^^^^^^^^^^
+
+warning: constant `DEFAULT_API_BASE` is never used
+ --> src\config.rs:9:7
+  |
+9 | const DEFAULT_API_BASE: &str = "http://localhost:3001";
+  |       ^^^^^^^^^^^^^^^^
+
+warning: constant `DEFAULT_TIMEOUT_SECS` is never used
+  --> src\config.rs:10:7
+   |
+10 | const DEFAULT_TIMEOUT_SECS: u64 = 30;
+   |       ^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `api_base` and `timeout` are never read
+  --> src\config.rs:57:5
+   |
+55 | struct DefaultsSection {
+   |        --------------- fields in this struct
+56 |     network: Option<String>,
+57 |     api_base: Option<String>,
+   |     ^^^^^^^^
+58 |     timeout: Option<u64>,
+   |     ^^^^^^^
+   |
+   = note: `DefaultsSection` has derived impls for the traits `Default`, `Clone`, and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: struct `RuntimeConfig` is never constructed
+  --> src\config.rs:62:12
+   |
+62 | pub struct RuntimeConfig {
+   |            ^^^^^^^^^^^^^
+   |
+   = note: `RuntimeConfig` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: function `resolve_runtime_config` is never used
+  --> src\config.rs:76:8
+   |
+76 | pub fn resolve_runtime_config(
+   |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `show_config` is never used
+   --> src\config.rs:103:8
+    |
+103 | pub fn show_config() -> Result<()> {
+    |        ^^^^^^^^^^^
+
+warning: function `edit_config` is never used
+   --> src\config.rs:126:8
+    |
+126 | pub fn edit_config() -> Result<()> {
+    |        ^^^^^^^^^^^
+
+warning: function `ensure_config_file_exists` is never used
+   --> src\config.rs:163:4
+    |
+163 | fn ensure_config_file_exists(path: &Path) -> Result<()> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `as_f64` is never used
+  --> src\conversions.rs:18:8
+   |
+18 | pub fn as_f64(val: &Value, field: &str) -> Result<f64> {
+   |        ^^^^^^
+
+warning: function `as_usize` is never used
+  --> src\conversions.rs:41:8
+   |
+41 | pub fn as_usize(val: &Value, field: &str) -> Result<usize> {
+   |        ^^^^^^^^
+
+warning: function `as_object` is never used
+  --> src\conversions.rs:70:8
+   |
+70 | pub fn as_object<'a>(val: &'a Value, field: &str) -> Result<&'a serde_json::Map<String, Value>> {
+   |        ^^^^^^^^^
+
+warning: function `string_to_str` is never used
+  --> src\conversions.rs:81:8
+   |
+81 | pub fn string_to_str(s: &String) -> &str {
+   |        ^^^^^^^^^^^^^
+
+warning: function `query_events` is never used
+  --> src\events.rs:28:14
+   |
+28 | pub async fn query_events(
+   |              ^^^^^^^^^^^^
+
+warning: field `severity` is never read
+  --> src\formal_verification.rs:17:9
+   |
+13 | pub struct PropertyDef {
+   |            ----------- field in this struct
+...
+17 |     pub severity: String,
+   |         ^^^^^^^^
+   |
+   = note: `PropertyDef` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `update_state` and `get` are never used
+   --> src\incident.rs:119:12
+    |
+102 | impl IncidentManager {
+    | -------------------- methods in this implementation
+...
+119 |     pub fn update_state(&mut self, id: Uuid, new_state: IncidentState) -> Result<()> {
+    |            ^^^^^^^^^^^^
+...
+145 |     pub fn get(&self, id: Uuid) -> Option<&Incident> {
+    |            ^^^
+
+warning: method `with_signature` is never used
+  --> src\manifest.rs:61:12
+   |
+42 | impl ExportManifest {
+   | ------------------- method in this implementation
+...
+61 |     pub fn with_signature(mut self, sig_info: PackageSignatureInfo) -> Self {
+   |            ^^^^^^^^^^^^^^
+
+warning: struct `Profiler` is never constructed
+  --> src\profiler.rs:63:12
+   |
+63 | pub struct Profiler {
+   |            ^^^^^^^^
+
+warning: associated items `new`, `enter_function`, `exit_function`, and `finish` are never used
+   --> src\profiler.rs:73:12
+    |
+72  | impl Profiler {
+    | ------------- associated items in this implementation
+73  |     pub fn new() -> Self {
+    |            ^^^
+...
+84  |     pub fn enter_function(&mut self, name: &str) {
+    |            ^^^^^^^^^^^^^^
+...
+99  |     pub fn exit_function(&mut self, name: &str, duration: Duration) {
+    |            ^^^^^^^^^^^^^
+...
+111 |     pub fn finish(self, contract_path: String, method: Option<String>) -> ProfileData {
+    |            ^^^^^^
+
+warning: function `profile_contract` is never used
+   --> src\profiler.rs:161:8
+    |
+161 | pub fn profile_contract(contract_path: &str, method: Option<&str>) -> Result<ProfileData> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `load_baseline` is never used
+   --> src\profiler.rs:208:8
+    |
+208 | pub fn load_baseline(baseline_path: &str) -> Result<ProfileData> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `parse_contract_functions` is never used
+   --> src\profiler.rs:214:8
+    |
+214 | pub fn parse_contract_functions(contract_path: &Path) -> Result<Vec<String>> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `simulate_execution` is never used
+   --> src\profiler.rs:238:8
+    |
+238 | pub fn simulate_execution(
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `generate_flame_graph` is never used
+   --> src\profiler.rs:275:8
+    |
+275 | pub fn generate_flame_graph(profile: &ProfileData, output_path: &Path) -> Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `compare_profiles` is never used
+   --> src\profiler.rs:343:8
+    |
+343 | pub fn compare_profiles(profile1: &ProfileData, profile2: &ProfileData) -> Vec<ComparisonResult> {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `generate_recommendations` is never used
+   --> src\profiler.rs:421:8
+    |
+421 | pub fn generate_recommendations(profile: &ProfileData) -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `min_uptime`, `max_latency_ms`, and `max_error_rate` are never read
+  --> src\sla.rs:35:9
+   |
+34 | pub struct SlaTargets {
+   |            ---------- fields in this struct
+35 |     pub min_uptime: f64,
+   |         ^^^^^^^^^^
+36 |     pub max_latency_ms: f64,
+   |         ^^^^^^^^^^^^^^
+37 |     pub max_error_rate: f64,
+   |         ^^^^^^^^^^^^^^
+   |
+   = note: `SlaTargets` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: constant `PENALTY_PER_VIOLATION` is never used
+  --> src\sla.rs:50:7
+   |
+50 | const PENALTY_PER_VIOLATION: f64 = 50.0;
+   |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CREDIT_RATE` is never used
+  --> src\sla.rs:51:7
+   |
+51 | const CREDIT_RATE: f64 = 0.10;
+   |       ^^^^^^^^^^^
+
+warning: struct `SlaManager` is never constructed
+  --> src\sla.rs:53:12
+   |
+53 | pub struct SlaManager {
+   |            ^^^^^^^^^^
+
+warning: associated items `new`, `record`, `check_violations`, and `evaluate` are never used
+   --> src\sla.rs:61:12
+    |
+60  | impl SlaManager {
+    | --------------- associated items in this implementation
+61  |     pub fn new() -> Self {
+    |            ^^^
+...
+70  |     pub fn record(&mut self, contract_id: &str, uptime: f64, latency: f64, error_rate: f64) {
+    |            ^^^^^^
+...
+84  |     pub fn check_violations(metrics: &SlaMetrics, targets: &SlaTargets) -> Vec<SlaViolation> {
+    |            ^^^^^^^^^^^^^^^^
+...
+110 |     pub fn evaluate(&mut self, contract_id: &str) -> Result<SlaStatus> {
+    |            ^^^^^^^^
+
+warning: field `contract_path` is never read
+  --> src\test_framework.rs:86:5
+   |
+85 | pub struct TestRunner {
+   |            ---------- field in this struct
+86 |     contract_path: String,
+   |     ^^^^^^^^^^^^^
+
+warning: field `name` is never read
+  --> src\test_framework.rs:93:5
+   |
+92 | struct ContractInfo {
+   |        ------------ field in this struct
+93 |     name: String,
+   |     ^^^^
+   |
+   = note: `ContractInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `soroban-registry-cli` (bin "soroban-registry") generated 65 warnings (7 duplicates)
+For more information about this error, try `rustc --explain E0428`.
+warning: `soroban-registry-cli` (bin "soroban-registry" test) generated 20 warnings (11 duplicates)
+error: could not compile `soroban-registry-cli` (bin "soroban-registry" test) due to 1 previous error; 20 warnings emitted
