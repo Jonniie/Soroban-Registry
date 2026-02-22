@@ -6,7 +6,7 @@ use axum::{
 use crate::{
     handlers, metrics_handler, custom_metrics_handlers,
     handlers, metrics_handler, breaking_changes,
-    handlers, metrics_handler, deprecation_handlers,
+    deprecation_handlers,
     state::AppState,
 };
 

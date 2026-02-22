@@ -43,6 +43,19 @@ pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<Va
     let uptime = state.started_at.elapsed().as_secs();
     let now = chrono::Utc::now().to_rfc3339();
 
+    if state.is_shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+        tracing::warn!(uptime_secs = uptime, "health check failing — shutting down");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "status": "shutting_down",
+                "version": "0.1.0",
+                "timestamp": now,
+                "uptime_secs": uptime
+            })),
+        );
+    }
+
     let db_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&state.db)
         .await
@@ -636,4 +649,31 @@ pub async fn get_contract_performance() -> impl IntoResponse {
 
 pub async fn route_not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(json!({"error": "Route not found"})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use sqlx::postgres::PgPoolOptions;
+    use prometheus::Registry;
+
+    #[tokio::test]
+    async fn test_health_check_shutdown_returns_503() {
+        let is_shutting_down = Arc::new(AtomicBool::new(true));
+        
+        // Connect lazy so it doesn't fail immediately without a DB
+        let db = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@localhost:5432/soroban_registry")
+            .unwrap();
+        let registry = Registry::new();
+        let state = AppState::new(db, registry, is_shutting_down);
+
+        let (status, json) = health_check(State(state)).await;
+        
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let value = json.0;
+        assert_eq!(value["status"], "shutting_down");
+    }
 }

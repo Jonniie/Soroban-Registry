@@ -20,9 +20,7 @@ pub async fn metrics_endpoint(State(state): State<AppState>) -> impl IntoRespons
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::AuthManager;
     use crate::cache::{CacheConfig, CacheLayer};
-    use crate::resource_tracking::ResourceManager;
     use axum::extract::State;
     use axum::response::IntoResponse;
     use prometheus::Registry;
@@ -37,8 +35,7 @@ mod tests {
             started_at: Instant::now(),
             cache: Arc::new(CacheLayer::new(CacheConfig::default())),
             registry,
-            resource_mgr: Arc::new(RwLock::new(ResourceManager::new())),
-            auth_mgr: Arc::new(RwLock::new(AuthManager::new("test-secret".to_string()))),
+            is_shutting_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
