@@ -16,9 +16,10 @@ CREATE TABLE canary_releases (
     error_count INTEGER DEFAULT 0,
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
-    created_by VARCHAR(255),
-    UNIQUE(contract_id, status) WHERE status IN ('pending', 'active')
+    created_by VARCHAR(255)
 );
+
+CREATE UNIQUE INDEX idx_canary_releases_one_active_per_contract ON canary_releases(contract_id, status) WHERE status IN ('pending', 'active');
 
 CREATE INDEX idx_canary_releases_contract_id ON canary_releases(contract_id);
 CREATE INDEX idx_canary_releases_status ON canary_releases(status);

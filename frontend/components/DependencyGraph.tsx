@@ -535,14 +535,14 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
     // ── Empty / loading states ──────────────────────────────────────────────
     if (nodes.length === 0) {
       return (
-        <div className="w-full h-full flex items-center justify-center bg-gray-950">
-          <p className="text-gray-500 text-sm">No nodes to display.</p>
+        <div className="w-full h-full flex items-center justify-center bg-muted/30">
+          <p className="text-muted-foreground text-sm">No nodes to display.</p>
         </div>
       );
     }
 
     return (
-      <div ref={containerRef} className="relative w-full h-full bg-gray-950">
+      <div ref={containerRef} className="relative w-full h-full bg-muted/30">
         <svg
           ref={svgRef}
           className="w-full h-full"
@@ -561,7 +561,7 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         {/* Tooltip */}
         {tooltip && (
           <div
-            className="pointer-events-none absolute z-40 bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-xl px-3 py-2.5 shadow-2xl text-xs max-w-[220px]"
+            className="pointer-events-none absolute z-40 bg-background/95 backdrop-blur-xl border border-border rounded-xl px-3 py-2.5 shadow-2xl text-xs max-w-[220px]"
             style={{
               left: tooltip.x + 14,
               top: tooltip.y - 10,
@@ -570,32 +570,32 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
                 : "none",
             }}
           >
-            <p className="font-semibold text-white mb-1 truncate">{tooltip.node.name}</p>
-            <p className="font-mono text-gray-500 truncate text-[10px] mb-1.5">
+            <p className="font-semibold text-foreground mb-1 truncate">{tooltip.node.name}</p>
+            <p className="font-mono text-muted-foreground truncate text-[10px] mb-1.5">
               {tooltip.node.contract_id.slice(0, 12)}…
             </p>
             <div className="space-y-0.5">
               <div className="flex justify-between gap-4">
-                <span className="text-gray-400">Network</span>
-                <span style={{ color: NETWORK_COLOR[tooltip.node.network] ?? "#9ca3af" }}>
+                <span className="text-muted-foreground">Network</span>
+                <span style={{ color: NETWORK_COLOR[tooltip.node.network] ?? undefined }}>
                   {tooltip.node.network}
                 </span>
               </div>
               {tooltip.node.category && (
                 <div className="flex justify-between gap-4">
-                  <span className="text-gray-400">Type</span>
-                  <span className="text-gray-200">{tooltip.node.category}</span>
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="text-foreground">{tooltip.node.category}</span>
                 </div>
               )}
               <div className="flex justify-between gap-4">
-                <span className="text-gray-400">Verified</span>
-                <span className={tooltip.node.is_verified ? "text-green-400" : "text-gray-500"}>
+                <span className="text-muted-foreground">Verified</span>
+                <span className={tooltip.node.is_verified ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}>
                   {tooltip.node.is_verified ? "✓" : "—"}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-gray-400">Dependents</span>
-                <span className="text-gray-200">{tooltip.dependents}</span>
+                <span className="text-muted-foreground">Dependents</span>
+                <span className="text-foreground">{tooltip.dependents}</span>
               </div>
             </div>
           </div>

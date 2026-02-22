@@ -62,7 +62,7 @@ pub enum Commands {
 
     /// Get detailed information about a contract
     Info {
-        /// Contract ID to look up
+        /// Contract registry UUID (use --network for network-specific config)
         contract_id: String,
     },
 
@@ -122,6 +122,18 @@ pub enum Commands {
     Migrate {
         #[command(subcommand)]
         action: MigrateCommands,
+    },
+    /// Analyze upgrades between two contract versions or schema files
+    UpgradeAnalyze {
+        /// Old contract version ID or local schema JSON file
+        old: String,
+
+        /// New contract version ID or local schema JSON file
+        new: String,
+
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Export a contract archive (.tar.gz)
@@ -693,6 +705,10 @@ async fn main() -> Result<()> {
         Commands::BreakingChanges { old_id, new_id, json } => {
             log::debug!("Command: breaking-changes | old={} new={}", old_id, new_id);
             commands::breaking_changes(&cli.api_url, &old_id, &new_id, json).await?;
+        }
+        Commands::UpgradeAnalyze { old, new, json } => {
+            log::debug!("Command: upgrade analyze | old={} new={}", old, new);
+            commands::upgrade_analyze(&cli.api_url, &old, &new, json).await?;
         }
         Commands::Migrate { action } => match action {
             MigrateCommands::Preview { old_id, new_id } => {

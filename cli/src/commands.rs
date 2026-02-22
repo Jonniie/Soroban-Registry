@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +13,8 @@ pub enum Network {
     Mainnet,
     Testnet,
     Futurenet,
+}
+
 use std::path::Path;
 
 use crate::patch::{PatchManager, Severity};
@@ -96,6 +99,97 @@ pub async fn search(
     Ok(())
 }
 
+/// Analyze two contract versions or schema files for breaking changes.
+pub async fn upgrade_analyze(api_url: &str, old_id: &str, new_id: &str, json_out: bool) -> Result<()> {
+    use reqwest::StatusCode;
+    use shared::upgrade::{compare_schemas, Schema};
+
+    // Helper to load schema from a local file
+    let try_load_file = |path: &str| -> Option<Schema> {
+        if std::path::Path::new(path).exists() {
+            let bytes = std::fs::read(path).ok()?;
+            Schema::from_json_bytes(&bytes).ok()
+        } else {
+            None
+        }
+    };
+
+    // If either argument is a local file, prefer file-based analysis
+    if let (Some(old_schema), Some(new_schema)) = (try_load_file(old_id), try_load_file(new_id)) {
+        let findings = compare_schemas(&old_schema, &new_schema);
+        if json_out {
+            println!("{}", serde_json::to_string_pretty(&findings)?);
+        } else {
+            for f in findings {
+                println!("[{:?}] {} - {}", f.severity, f.field.unwrap_or_default(), f.message);
+            }
+        }
+        return Ok(());
+    }
+
+    // Otherwise try to fetch versions from the API (assumes endpoint exists)
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/contract_versions/{}", api_url, old_id);
+    let old_res = client.get(&url).send().await.context("failed to fetch old version")?;
+    if old_res.status() == StatusCode::NOT_FOUND {
+        anyhow::bail!("Old version {} not found via API. Try passing a local schema JSON file instead.", old_id);
+    }
+    let old_json: serde_json::Value = old_res.json().await?;
+
+    let url2 = format!("{}/api/contract_versions/{}", api_url, new_id);
+    let new_res = client.get(&url2).send().await.context("failed to fetch new version")?;
+    if new_res.status() == StatusCode::NOT_FOUND {
+        anyhow::bail!("New version {} not found via API. Try passing a local schema JSON file instead.", new_id);
+    }
+    let new_json: serde_json::Value = new_res.json().await?;
+
+    // Expect the API to expose a simple schema JSON in `state_schema` field; fall back to error.
+    let old_schema_str = old_json["state_schema"].as_str().ok_or_else(|| anyhow::anyhow!("API did not return state_schema for old version"))?;
+    let new_schema_str = new_json["state_schema"].as_str().ok_or_else(|| anyhow::anyhow!("API did not return state_schema for new version"))?;
+
+    let old_schema = Schema::from_json_bytes(old_schema_str.as_bytes()).context("failed to parse old schema")?;
+    let new_schema = Schema::from_json_bytes(new_schema_str.as_bytes()).context("failed to parse new schema")?;
+
+    let findings = compare_schemas(&old_schema, &new_schema);
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&findings)?);
+    } else {
+        for f in findings {
+            println!("[{:?}] {} - {}", f.severity, f.field.unwrap_or_default(), f.message);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn upgrade_analyze_with_local_files_returns_ok() {
+        let dir = tempdir().unwrap();
+        let old_path = dir.path().join("old_schema.json");
+        let new_path = dir.path().join("new_schema.json");
+
+        // Old schema with one field
+        let old_schema = r#"{ "fields": [ { "name": "count", "type": "u64" } ] }"#;
+        // New schema empty (removal -> error expected)
+        let new_schema = r#"{ "fields": [] }"#;
+
+        let mut f1 = std::fs::File::create(&old_path).unwrap();
+        write!(f1, "{}", old_schema).unwrap();
+        let mut f2 = std::fs::File::create(&new_path).unwrap();
+        write!(f2, "{}", new_schema).unwrap();
+
+        // Should return Ok() even if findings include errors; function prints results.
+        let res = upgrade_analyze("http://localhost:3001", old_path.to_str().unwrap(), new_path.to_str().unwrap(), true).await;
+        assert!(res.is_ok());
+    }
+}
+
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -108,9 +202,23 @@ impl fmt::Display for Network {
 
 impl FromStr for Network {
     type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "mainnet" => Ok(Network::Mainnet),
+            "testnet" => Ok(Network::Testnet),
+            "futurenet" => Ok(Network::Futurenet),
+            _ => anyhow::bail!(
+                "Invalid network: {}. Allowed values: mainnet, testnet, futurenet",
+                s
+            ),
+        }
+    }
+}
+
 fn resolve_smart_routing(current_network: Network) -> String {
     if current_network.to_string() == "auto" {
-        "mainnet".to_string() 
+        "mainnet".to_string()
     } else {
         current_network.to_string()
     }
@@ -414,17 +522,7 @@ pub async fn migrate(
                 shared::models::MigrationStatus::Success,
                 "Simulation: Migration executed successfully via soroban CLI (mocked).".to_string(),
             )
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "mainnet" => Ok(Network::Mainnet),
-            "testnet" => Ok(Network::Testnet),
-            "futurenet" => Ok(Network::Futurenet),
-            _ => anyhow::bail!(
-                "Invalid network: {}. Allowed values: mainnet, testnet, futurenet",
-                s
-            ),
         }
-    }
     };
 
     // 5. Update Status
@@ -453,42 +551,29 @@ pub async fn migrate(
     }
 }
 
-impl FromStr for Network {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "mainnet" => Ok(Network::Mainnet),
-            "testnet" => Ok(Network::Testnet),
-            "futurenet" => Ok(Network::Futurenet),
-            _ => anyhow::bail!(
-                "Invalid network: {}. Allowed values: mainnet, testnet, futurenet",
-                s
-            ),
-        }
-        _ => (contract_id.to_string(), "unknown".to_string()),
-    };
-
+pub async fn export(
+    _api_url: &str,
+    id: &str,
+    output: &str,
+    contract_dir: &str,
+) -> Result<()> {
     let source = std::path::Path::new(contract_dir);
     anyhow::ensure!(
         source.is_dir(),
         "contract directory does not exist: {}",
         contract_dir
     );
-
     crate::export::create_archive(
         source,
         std::path::Path::new(output),
-        contract_id,
-        &name,
-        &network,
+        id,
+        "contract",
+        "testnet",
     )?;
-
     println!("{}", "✓ Export complete!".green().bold());
     println!("  {}: {}", "Output".bold(), output);
-    println!("  {}: {}", "Contract".bold(), contract_id.bright_black());
-    println!("  {}: {}\n", "Name".bold(), name);
-
+    println!("  {}: {}", "Contract".bold(), id.bright_black());
+    println!("  {}: {}\n", "Name".bold(), "contract");
     Ok(())
 }
 
@@ -714,54 +799,6 @@ pub async fn patch_apply(api_url: &str, contract_id: &str, patch_id: &str) -> Re
     Ok(())
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ConfigFile {
-    network: Option<String>,
-}
-
-pub fn resolve_network(cli_flag: Option<String>) -> Result<Network> {
-    // 1. CLI Flag
-    if let Some(net_str) = cli_flag {
-        return net_str.parse::<Network>();
-    }
-
-    // 2. Config File
-    if let Some(config_path) = config_file_path() {
-        if config_path.exists() {
-            let content = fs::read_to_string(&config_path)
-                .with_context(|| format!("Failed to read config file at {:?}", config_path))?;
-
-            let config: ConfigFile =
-                toml::from_str(&content).with_context(|| "Failed to parse config file")?;
-
-        let comparisons = profiler::compare_profiles(&baseline, &profile_data);
-
-        println!("\n{}", "Comparison Results:".bold().yellow());
-        for comp in comparisons.iter().take(10) {
-            let sign = if comp.time_diff_ns > 0 { "+" } else { "" };
-            println!(
-                "{}: {} ({}{:.2}%, {:.2}ms → {:.2}ms)",
-                comp.function.bold(),
-                comp.status,
-                sign,
-                comp.time_diff_percent,
-                comp.baseline_time.as_secs_f64() * 1000.0,
-                comp.current_time.as_secs_f64() * 1000.0
-            );
-        }
-    }
-
-    if show_recommendations {
-        let recommendations = profiler::generate_recommendations(&profile_data);
-        println!("\n{}", "Recommendations:".bold().magenta());
-        for (i, rec) in recommendations.iter().enumerate() {
-            println!("{}. {}", i + 1, rec);
-        }
-    }
-
-    Ok(())
-}
-
 pub async fn deps_list(api_url: &str, contract_id: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/contracts/{}/dependencies", api_url, contract_id);
@@ -971,6 +1008,10 @@ pub fn incident_trigger(contract_id: &str, severity_str: &str) -> Result<()> {
         "→".bright_black(),
         id
     );
+
+    Ok(())
+}
+
 pub async fn config_get(api_url: &str, contract_id: &str, environment: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/contracts/{}/config?environment={}", api_url, contract_id, environment);
@@ -1127,6 +1168,10 @@ pub fn incident_update(incident_id_str: &str, state_str: &str) -> Result<()> {
     }
 
     println!();
+
+    Ok(())
+}
+
 pub async fn scan_deps(
     api_url: &str,
     contract_id: &str,
@@ -1204,6 +1249,8 @@ pub async fn scan_deps(
     }
 
     Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1467,15 +1514,17 @@ pub async fn list_functions(api_url: &str, contract_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn info(api_url: &str, contract_id: &str, network: config::Network) -> Result<()> {
+/// Fetch contract info from the registry. `id` is the contract's registry UUID.
+/// Use --network to get network-specific config (e.g. mainnet, testnet).
+pub async fn info(api_url: &str, id: &str, network: crate::config::Network) -> Result<()> {
     println!("\n{}", "Fetching contract information...".bold().cyan());
     
-    let url = format!("{}/contracts/{}", api_url, contract_id);
+    let url = format!("{}/api/contracts/{}", api_url.trim_end_matches('/'), id);
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
         .query(&[("network", network.to_string())])
-       .send()
+        .send()
         .await?;
 
     if response.status().is_success() {
@@ -1532,3 +1581,4 @@ pub fn sla_status(id: &str) -> Result<()> {
 
     Ok(())
 }
+
