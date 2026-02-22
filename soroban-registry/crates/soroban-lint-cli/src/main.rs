@@ -3,6 +3,9 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use serde_json::json;
 use soroban_lint_core::{Analyzer, AutoFixer, Diagnostic, LintConfig, Severity};
+use soroban_load_balancer::{
+    BalancingAlgorithm, LoadBalancer, LoadBalancerConfig, Region,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -55,6 +58,79 @@ enum Commands {
         #[arg(long, default_value = "human")]
         format: String,
     },
+
+    /// Manage contract load balancing
+    Balancer {
+        #[command(subcommand)]
+        action: BalancerCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum BalancerCommands {
+    /// Start the load balancer with registered instances
+    Start {
+        /// Algorithm to use: round-robin | least-loaded | geographic
+        #[arg(long, default_value = "round-robin")]
+        algorithm: String,
+
+        /// Path to instances config JSON file
+        #[arg(long)]
+        config: String,
+    },
+
+    /// Show current load balancer status and metrics
+    Status {
+        #[arg(long, default_value = "human")]
+        format: String,
+
+        /// Path to instances config JSON file (optional)
+        #[arg(long)]
+        config: Option<String>,
+    },
+
+    /// Register a new contract instance
+    Register {
+        /// Unique instance ID
+        #[arg(long)]
+        id: String,
+
+        /// Contract ID (Stellar strkey)
+        #[arg(long)]
+        contract_id: String,
+
+        /// RPC endpoint URL
+        #[arg(long)]
+        rpc: String,
+
+        /// Geographic region
+        #[arg(long, default_value = "us-east")]
+        region: String,
+
+        /// Instance weight (higher = more traffic)
+        #[arg(long, default_value = "1")]
+        weight: u32,
+    },
+
+    /// Remove an instance from the pool
+    Remove {
+        /// Instance ID to remove
+        id: String,
+    },
+
+    /// Route a test request and show which instance was selected
+    Route {
+        /// Optional session key for affinity testing
+        #[arg(long)]
+        session: Option<String>,
+
+        #[arg(long, default_value = "human")]
+        format: String,
+
+        /// Path to instances config JSON file (optional)
+        #[arg(long)]
+        config: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -75,6 +151,9 @@ fn main() -> Result<()> {
         Commands::Rules { format } => {
             rules_command(format)?;
         }
+        Commands::Balancer { action } => {
+            balancer_command(action)?;
+        }
     }
 
     Ok(())
@@ -87,36 +166,29 @@ fn lint_command(
     fix: bool,
     config_path: Option<String>,
     rules_filter: Option<String>,
-    _ignore_filter: Option<String>,  // FIX: prefix with _ to suppress unused warning
+    _ignore_filter: Option<String>,
 ) -> Result<()> {
     let start_time = Instant::now();
 
-    // Load configuration
     let mut config = LintConfig::load(config_path.as_deref())?;
 
-    // Override config with command-line arguments
     if level != "warning" {
         config.lint.level = level.clone();
     }
 
     let min_severity = config.min_severity();
-
-    // Create analyzer
     let analyzer = Analyzer::new();
 
-    // Parse filter rules if provided
     let rule_ids: Vec<&str> = if let Some(rules_str) = &rules_filter {
         rules_str.split(',').collect()
     } else {
         vec![]
     };
 
-    // Collect all Rust files
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let path_obj = PathBuf::from(&path);
 
     if path_obj.is_file() {
-        // Single file
         if path_obj.extension().map_or(false, |ext| ext == "rs") {
             let content = fs::read_to_string(&path)?;
             let file_diags = if rule_ids.is_empty() {
@@ -127,7 +199,6 @@ fn lint_command(
             diagnostics.extend(file_diags);
         }
     } else if path_obj.is_dir() {
-        // Directory - recursively find all .rs files
         for entry in WalkDir::new(&path)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -136,7 +207,6 @@ fn lint_command(
             let file_path = entry.path();
             let file_path_str = file_path.to_string_lossy().to_string();
 
-            // Check if should be ignored
             if config.should_ignore(&file_path_str) {
                 continue;
             }
@@ -151,7 +221,6 @@ fn lint_command(
         }
     }
 
-    // Apply fixes if requested
     if fix {
         match AutoFixer::apply_fixes(&diagnostics) {
             Ok(count) => {
@@ -165,27 +234,21 @@ fn lint_command(
         }
     }
 
-    // Filter by severity
     diagnostics = Analyzer::filter_by_severity(diagnostics, min_severity);
-
-    // Sort diagnostics
     Analyzer::sort_diagnostics(&mut diagnostics);
 
-    // Count by severity
     let error_count = diagnostics.iter().filter(|d| d.severity == Severity::Error).count();
     let warning_count = diagnostics.iter().filter(|d| d.severity == Severity::Warning).count();
     let info_count = diagnostics.iter().filter(|d| d.severity == Severity::Info).count();
 
     let duration = start_time.elapsed();
 
-    // Output results
     if format == "json" {
         output_json(&diagnostics, error_count, warning_count, info_count, duration)?;
     } else {
         output_human(&diagnostics, error_count, warning_count, info_count, duration);
     }
 
-    // Exit code: 1 if errors/warnings found, 0 otherwise
     if error_count > 0 || (warning_count > 0 && min_severity <= Severity::Warning) {
         std::process::exit(1);
     } else {
@@ -210,13 +273,80 @@ fn rules_command(format: String) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&rules_json)?);
     } else {
         println!("Available Lint Rules:\n");
-        // FIX: iterate over &rules so ownership is not moved into the for loop,
-        // allowing rules.len() to be called afterwards
         for (id, severity) in &rules {
             let severity_str = format!("{:?}", severity).to_lowercase();
             println!("  {} [{}]", id, severity_str);
         }
         println!("\nTotal: {} rules", rules.len());
+    }
+
+    Ok(())
+}
+
+fn balancer_command(action: BalancerCommands) -> Result<()> {
+    match action {
+        BalancerCommands::Start { algorithm, config: _config } => {
+            let algo = match algorithm.as_str() {
+                "least-loaded" => BalancingAlgorithm::LeastLoaded,
+                "geographic"   => BalancingAlgorithm::Geographic,
+                _              => BalancingAlgorithm::RoundRobin,
+            };
+            let cfg = LoadBalancerConfig { algorithm: algo, ..Default::default() };
+            let lb = LoadBalancer::new(cfg);
+            println!("✅ Load balancer started ({} instances registered)", lb.total_count());
+        }
+
+        // FIX: destructure all fields — config field was missing, causing pattern mismatch
+        BalancerCommands::Status { format, config: _config } => {
+            let lb = LoadBalancer::new(LoadBalancerConfig::default());
+            let metrics = lb.metrics();
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&metrics)?);
+            } else {
+                println!("Healthy instances : {}", lb.healthy_count());
+                println!("Total instances   : {}", lb.total_count());
+                println!("Active sessions   : (run with a live balancer for live data)");
+            }
+        }
+
+        BalancerCommands::Register { id, contract_id, rpc, region, weight } => {
+            let r = match region.as_str() {
+                "us-west"      => Region::UsWest,
+                "eu-west"      => Region::EuWest,
+                "eu-central"   => Region::EuCentral,
+                "ap-southeast" => Region::ApSoutheast,
+                "ap-northeast" => Region::ApNortheast,
+                _              => Region::UsEast,
+            };
+            let lb = LoadBalancer::new(LoadBalancerConfig::default());
+            lb.register_instance(&id, &contract_id, &rpc, r, weight);
+            println!("✅ Registered instance '{}' → {}", id, rpc);
+        }
+
+        BalancerCommands::Remove { id } => {
+            let lb = LoadBalancer::new(LoadBalancerConfig::default());
+            lb.remove_instance(&id);
+            println!("✅ Removed instance '{}'", id);
+        }
+
+        // FIX: destructure all fields — config field was missing, causing pattern mismatch
+        BalancerCommands::Route { session, format, config: _config } => {
+            let lb = LoadBalancer::new(LoadBalancerConfig::default());
+            match lb.route(session.as_deref()) {
+                Ok(result) => {
+                    if format == "json" {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("Routed to instance : {}", result.instance_id);
+                        println!("Contract ID        : {}", result.contract_id);
+                        println!("RPC endpoint       : {}", result.rpc_endpoint);
+                        println!("Algorithm          : {:?}", result.algorithm_used);
+                        println!("Session affinity   : {}", result.session_affinity);
+                    }
+                }
+                Err(e) => eprintln!("❌ Routing failed: {}", e),
+            }
+        }
     }
 
     Ok(())

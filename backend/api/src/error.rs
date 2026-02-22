@@ -52,6 +52,10 @@ impl ApiError {
         Self::new(StatusCode::UNPROCESSABLE_ENTITY, error, message)
     }
 
+    pub fn conflict(error: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, error, message)
+    }
+
     pub fn db_error(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "DatabaseError", message)
     }

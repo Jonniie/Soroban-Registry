@@ -25,6 +25,36 @@ pub struct Contract {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub is_maintenance: bool,
+    /// Groups rows that represent the same logical contract across networks (Issue #43)
+    #[serde(default)]
+    pub logical_id: Option<Uuid>,
+    /// Per-network config: { "mainnet": { contract_id, is_verified, min_version, max_version }, ... }
+    #[serde(default)]
+    pub network_configs: Option<serde_json::Value>,
+}
+
+/// Response for GET /contracts/:id with optional network-specific slice (Issue #43)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractGetResponse {
+    #[serde(flatten)]
+    pub contract: Contract,
+    /// When ?network= is set, the requested network
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_network: Option<Network>,
+    /// When ?network= is set, that network's config slice
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_config: Option<NetworkConfig>,
+}
+
+/// Per-network config: address, verified status, min/max version (Issue #43)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    pub contract_id: String,
+    pub is_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_version: Option<String>,
 }
 
 /// Network where the contract is deployed
@@ -47,6 +77,17 @@ impl std::fmt::Display for Network {
     }
 }
 
+/// Upgrade strategy for contract upgrades
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "upgrade_strategy_type", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum UpgradeStrategy {
+    Proxy,
+    Uups,
+    DataMigration,
+    ShadowContract,
+}
+
 /// Contract version information
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ContractVersion {
@@ -58,6 +99,8 @@ pub struct ContractVersion {
     pub commit_hash: Option<String>,
     pub release_notes: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_schema: Option<serde_json::Value>,
 }
 
 /// Verification status and details
@@ -157,6 +200,60 @@ pub struct PublishRequest {
     pub dependencies: Vec<DependencyDeclaration>,
 }
 
+/// Request to create a new contract version with ABI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateContractVersionRequest {
+    pub contract_id: String,
+    pub version: String,
+    pub wasm_hash: String,
+    pub abi: serde_json::Value,
+    pub source_url: Option<String>,
+    pub commit_hash: Option<String>,
+    pub release_notes: Option<String>,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Deprecation management (issue #65)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeprecationStatus {
+    Active,
+    Deprecated,
+    Retired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeprecationInfo {
+    pub contract_id: String,
+    pub status: DeprecationStatus,
+    pub deprecated_at: Option<DateTime<Utc>>,
+    pub retirement_at: Option<DateTime<Utc>>,
+    pub replacement_contract_id: Option<String>,
+    pub migration_guide_url: Option<String>,
+    pub notes: Option<String>,
+    pub days_remaining: Option<i64>,
+    pub dependents_notified: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeprecateContractRequest {
+    pub retirement_at: DateTime<Utc>,
+    pub replacement_contract_id: Option<String>,
+    pub migration_guide_url: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeprecationNotification {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub deprecated_contract_id: Uuid,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+}
 /// Dependency declaration in publish request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyDeclaration {
@@ -172,6 +269,17 @@ pub struct ContractDependency {
     pub dependency_name: String,
     pub dependency_contract_id: Option<Uuid>,
     pub version_constraint: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Tracks migration scripts between contract versions
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MigrationScript {
+    pub id: Uuid,
+    pub from_version: Uuid,
+    pub to_version: Uuid,
+    pub script_path: String,
+    pub checksum: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -219,6 +327,8 @@ pub enum SortOrder {
 pub struct ContractSearchParams {
     pub query: Option<String>,
     pub network: Option<Network>,
+    /// Multiple networks filter (e.g. ?network=mainnet&network=testnet)
+    pub networks: Option<Vec<Network>>,
     pub verified_only: Option<bool>,
     pub category: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -277,6 +387,79 @@ impl<T> PaginatedResponse<T> {
             total_pages,
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRACT INTERACTION HISTORY (Issue #46)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One contract invocation row (DB)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ContractInteraction {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub user_address: Option<String>,
+    pub interaction_type: String,
+    pub transaction_hash: Option<String>,
+    pub method: Option<String>,
+    pub parameters: Option<serde_json::Value>,
+    pub return_value: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Response item for GET /api/contracts/:id/interactions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractInteractionResponse {
+    pub id: Uuid,
+    pub account: Option<String>,
+    pub method: Option<String>,
+    pub parameters: Option<serde_json::Value>,
+    pub return_value: Option<serde_json::Value>,
+    pub transaction_hash: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Query params for GET /api/contracts/:id/interactions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionsQueryParams {
+    #[serde(default = "default_interactions_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    pub account: Option<String>,
+    pub method: Option<String>,
+    pub from_timestamp: Option<String>,
+    pub to_timestamp: Option<String>,
+}
+
+fn default_interactions_limit() -> i64 {
+    50
+}
+
+/// Request body for POST /api/contracts/:id/interactions (single)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInteractionRequest {
+    pub account: Option<String>,
+    pub method: Option<String>,
+    pub transaction_hash: Option<String>,
+    pub parameters: Option<serde_json::Value>,
+    pub return_value: Option<serde_json::Value>,
+    pub timestamp: Option<DateTime<Utc>>,
+}
+
+/// Request body for POST /api/contracts/:id/interactions/batch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInteractionBatchRequest {
+    pub interactions: Vec<CreateInteractionRequest>,
+}
+
+/// Paginated interactions response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionsListResponse {
+    pub items: Vec<ContractInteractionResponse>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
 }
 
 /// Migration status
@@ -684,6 +867,65 @@ pub struct CreateAlertConfigRequest {
     pub threshold_type: String,
     pub threshold_value: f64,
     pub severity: Option<AlertSeverity>,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Custom contract metrics (issue #89)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "custom_metric_type", rename_all = "snake_case")]
+pub enum CustomMetricType {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CustomMetric {
+    pub id: Uuid,
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub value: Decimal,
+    pub unit: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub ledger_sequence: Option<i64>,
+    pub transaction_hash: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub network: Network,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordCustomMetricRequest {
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub value: f64,
+    pub unit: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub ledger_sequence: Option<i64>,
+    pub transaction_hash: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub network: Option<Network>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CustomMetricAggregate {
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub bucket_start: DateTime<Utc>,
+    pub bucket_end: DateTime<Utc>,
+    pub sample_count: i32,
+    pub sum_value: Option<Decimal>,
+    pub avg_value: Option<Decimal>,
+    pub min_value: Option<Decimal>,
+    pub max_value: Option<Decimal>,
+    pub p50_value: Option<Decimal>,
+    pub p95_value: Option<Decimal>,
+    pub p99_value: Option<Decimal>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────

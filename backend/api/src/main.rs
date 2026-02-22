@@ -4,6 +4,7 @@ mod error;
 mod state;
 mod rate_limit;
 mod aggregation;
+mod validation;
 // mod auth;
 // mod auth_handlers;
 mod cache;
@@ -12,6 +13,10 @@ mod metrics;
 // mod resource_handlers;
 // mod resource_tracking;
 mod analytics;
+mod custom_metrics_handlers;
+mod breaking_changes;
+mod deprecation_handlers;
+mod type_safety;
 
 use anyhow::Result;
 use axum::{middleware, Router};
@@ -20,6 +25,8 @@ use dotenv::dotenv;
 use prometheus::Registry;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -65,7 +72,8 @@ async fn main() -> Result<()> {
     }
     
     // Create app state
-    let state = AppState::new(pool, registry);
+    let is_shutting_down = Arc::new(AtomicBool::new(false));
+    let state = AppState::new(pool.clone(), registry, is_shutting_down.clone());
     let rate_limit_state = RateLimitState::from_env();
 
     let cors = CorsLayer::new()
@@ -97,11 +105,57 @@ async fn main() -> Result<()> {
     tracing::info!("API server listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .with_graceful_shutdown(async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        tracing::info!("SIGTERM/SIGINT received. Failing health checks and stopping new requests...");
+        is_shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = tx.send(());
+    });
+
+    tokio::select! {
+        res = server => {
+            if let Err(e) = res {
+                tracing::error!("Server error: {}", e);
+            }
+        }
+        _ = async {
+            let _ = rx.await;
+            tracing::info!("Draining active requests (timeout: 30s)...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            tracing::warn!("Drain timeout reached. Forcing shutdown...");
+        } => {}
+    }
+
+    tracing::info!("Closing database connections...");
+    pool.close().await;
+    tracing::info!("Shutdown complete");
 
     Ok(())
 }

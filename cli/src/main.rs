@@ -9,6 +9,7 @@ mod fuzz;
 mod import;
 mod incident;
 mod manifest;
+mod migration;
 mod multisig;
 mod package_signing;
 mod patch;
@@ -61,7 +62,7 @@ pub enum Commands {
 
     /// Get detailed information about a contract
     Info {
-        /// Contract ID to look up
+        /// Contract registry UUID (use --network for network-specific config)
         contract_id: String,
     },
 
@@ -101,22 +102,38 @@ pub enum Commands {
         /// Maximum number of contracts to show
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Output results as machine-readable JSON
         #[arg(long)]
-        /// Contract ID to migrate
-        #[arg(long)]
-        contract_id: String,
+        json: bool,
+    },
 
-        /// Path to the new WASM file
+    /// Detect breaking changes between contract versions
+    BreakingChanges {
+        /// Old contract identifier (UUID or contract_id@version)
+        old_id: String,
+        /// New contract identifier (UUID or contract_id@version)
+        new_id: String,
+        /// Output results as machine-readable JSON
         #[arg(long)]
-        wasm: String,
+        json: bool,
+    },
 
-        /// Simulate a migration failure (for testing)
-        #[arg(long)]
-        simulate_fail: bool,
+    /// Contract state migration assistant
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateCommands,
+    },
+    /// Analyze upgrades between two contract versions or schema files
+    UpgradeAnalyze {
+        /// Old contract version ID or local schema JSON file
+        old: String,
 
-        /// Dry-run: show what would happen without making changes
+        /// New contract version ID or local schema JSON file
+        new: String,
+
+        /// Output JSON
         #[arg(long)]
-        dry_run: bool,
+        json: bool,
     },
 
     /// Export a contract archive (.tar.gz)
@@ -573,6 +590,47 @@ pub enum KeysCommands {
     },
 }
 
+/// Sub-commands for contract migration workflow
+#[derive(Debug, Subcommand)]
+pub enum MigrateCommands {
+    /// Preview migration outcome (dry-run)
+    Preview {
+        old_id: String,
+        new_id: String,
+    },
+    /// Analyze schema differences between versions
+    Analyze {
+        old_id: String,
+        new_id: String,
+    },
+    /// Generate migration script template (rust|js)
+    Generate {
+        old_id: String,
+        new_id: String,
+        #[arg(long, default_value = "rust")]
+        language: String,
+        #[arg(long)]
+        output: Option<String>,
+    },
+    /// Validate migration for data loss risks
+    Validate {
+        old_id: String,
+        new_id: String,
+    },
+    /// Apply migration and record history
+    Apply {
+        old_id: String,
+        new_id: String,
+    },
+    /// Rollback a migration by migration ID
+    Rollback { migration_id: String },
+    /// Show migration history
+    History {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -644,20 +702,54 @@ async fn main() -> Result<()> {
             log::debug!("Command: list | limit={}", limit);
             commands::list(&cli.api_url, limit, network, json).await?;
         }
-        Commands::Migrate {
-            contract_id,
-            wasm,
-            simulate_fail,
-            dry_run,
-        } => {
-            log::debug!(
-                "Command: migrate | contract_id={} wasm={} dry_run={}",
-                contract_id,
-                wasm,
-                dry_run
-            );
-            commands::migrate(&cli.api_url, &contract_id, &wasm, simulate_fail, dry_run).await?;
+        Commands::BreakingChanges { old_id, new_id, json } => {
+            log::debug!("Command: breaking-changes | old={} new={}", old_id, new_id);
+            commands::breaking_changes(&cli.api_url, &old_id, &new_id, json).await?;
         }
+        Commands::UpgradeAnalyze { old, new, json } => {
+            log::debug!("Command: upgrade analyze | old={} new={}", old, new);
+            commands::upgrade_analyze(&cli.api_url, &old, &new, json).await?;
+        }
+        Commands::Migrate { action } => match action {
+            MigrateCommands::Preview { old_id, new_id } => {
+                log::debug!("Command: migrate preview | old_id={} new_id={}", old_id, new_id);
+                migration::preview(&old_id, &new_id)?;
+            }
+            MigrateCommands::Analyze { old_id, new_id } => {
+                log::debug!("Command: migrate analyze | old_id={} new_id={}", old_id, new_id);
+                migration::analyze(&old_id, &new_id)?;
+            }
+            MigrateCommands::Generate {
+                old_id,
+                new_id,
+                language,
+                output,
+            } => {
+                log::debug!(
+                    "Command: migrate generate | old_id={} new_id={} language={}",
+                    old_id,
+                    new_id,
+                    language
+                );
+                migration::generate_template(&old_id, &new_id, &language, output.as_deref())?;
+            }
+            MigrateCommands::Validate { old_id, new_id } => {
+                log::debug!("Command: migrate validate | old_id={} new_id={}", old_id, new_id);
+                migration::validate(&old_id, &new_id)?;
+            }
+            MigrateCommands::Apply { old_id, new_id } => {
+                log::debug!("Command: migrate apply | old_id={} new_id={}", old_id, new_id);
+                migration::apply(&old_id, &new_id)?;
+            }
+            MigrateCommands::Rollback { migration_id } => {
+                log::debug!("Command: migrate rollback | migration_id={}", migration_id);
+                migration::rollback(&migration_id)?;
+            }
+            MigrateCommands::History { limit } => {
+                log::debug!("Command: migrate history | limit={}", limit);
+                migration::history(limit)?;
+            }
+        },
         Commands::Export {
             id,
             output,

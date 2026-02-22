@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { Network } from "@/lib/api";
 import ExampleGallery from "@/components/ExampleGallery";
 import DependencyGraph from "@/components/DependencyGraph";
 import {
@@ -16,19 +17,29 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useAnalytics } from "@/hooks/useAnalytics";
+import { useEffect } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import FormalVerificationPanel from "@/components/FormalVerificationPanel";
+import InteractionHistorySection from "@/components/InteractionHistorySection";
 import Navbar from "@/components/Navbar";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
 import { useQueryClient } from "@tanstack/react-query";
+import CustomMetricsPanel from "@/components/CustomMetricsPanel";
+import DeprecationBanner from "@/components/DeprecationBanner";
+
+const NETWORKS: Network[] = ["mainnet", "testnet", "futurenet"];
 
 // Mock for maintenance status since it was missing in the original file view but used in code
 const maintenanceStatus = { is_maintenance: false, current_window: null };
-
-
-
 function ContractDetailsContent() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const id = params.id as string;
+  const networkFromUrl = searchParams.get("network") as Network | null;
+  const [selectedNetwork, setSelectedNetwork] = useState<Network>(
+    networkFromUrl && NETWORKS.includes(networkFromUrl) ? networkFromUrl : "mainnet"
+  );
 
   const {
     data: contract,
@@ -42,6 +53,22 @@ function ContractDetailsContent() {
   const { data: dependencies, isLoading: depsLoading } = useQuery({
     queryKey: ["contract-dependencies", id],
     queryFn: () => api.getContractDependencies(id),
+    enabled: !!contract,
+  });
+  const { logEvent } = useAnalytics();
+
+  useEffect(() => {
+    if (!error) return;
+    logEvent("error_event", {
+      source: "contract_details",
+      contract_id: id,
+      message: "Failed to load contract details",
+    });
+  }, [error, id, logEvent]);
+
+  const { data: deprecationInfo } = useQuery({
+    queryKey: ["contract-deprecation", id],
+    queryFn: () => api.getDeprecationInfo(id),
     enabled: !!contract,
   });
 
@@ -67,6 +94,10 @@ function ContractDetailsContent() {
     );
   }
 
+  const configForNetwork = contract.network_configs?.[selectedNetwork];
+  const displayContractId = configForNetwork?.contract_id ?? contract.contract_id;
+  const displayVerified = configForNetwork?.is_verified ?? contract.is_verified;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
       <Link
@@ -82,6 +113,9 @@ function ContractDetailsContent() {
         <MaintenanceBanner window={maintenanceStatus.current_window} />
       )}
 
+      {/* Deprecation Banner */}
+      {deprecationInfo && <DeprecationBanner info={deprecationInfo} />}
+
       {/* Header */}
       <div className="mb-12">
         <div className="flex items-start justify-between mb-4">
@@ -91,15 +125,36 @@ function ContractDetailsContent() {
             </h1>
             <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
               <span className="font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-sm">
-                {contract.contract_id}
+                {displayContractId}
               </span>
-              {contract.is_verified && (
+              {displayVerified && (
                 <span className="flex items-center gap-1 text-green-600 dark:text-green-400 text-sm font-medium">
                   <CheckCircle2 className="w-4 h-4" />
                   Verified
                 </span>
               )}
             </div>
+          </div>
+
+          {/* Network tabs (Issue #43) */}
+          <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg w-fit">
+            {NETWORKS.map((net) => {
+              const hasConfig = !!contract.network_configs?.[net];
+              return (
+                <button
+                  key={net}
+                  type="button"
+                  onClick={() => setSelectedNetwork(net)}
+                  className={`px-4 py-2 rounded-md text-sm font-medium capitalize transition-colors ${
+                    selectedNetwork === net
+                      ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm"
+                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  } ${!hasConfig ? "opacity-60" : ""}`}
+                >
+                  {net}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex gap-2">
@@ -150,6 +205,14 @@ function ContractDetailsContent() {
           <section>
             <ExampleGallery contractId={contract.id} />
           </section>
+
+<<<<<<< feature/issue-46-add-contract-interaction-history-tracking
+          {/* Interaction History (Issue #46) */}
+          <InteractionHistorySection contractId={contract.id} />
+=======
+          {/* Custom Metrics */}
+          <CustomMetricsPanel contractId={contract.id} />
+>>>>>>> main
         </div>
 
         {/* Sidebar */}
@@ -163,9 +226,29 @@ function ContractDetailsContent() {
               <div>
                 <dt className="text-gray-500 dark:text-gray-400">Network</dt>
                 <dd className="font-medium text-gray-900 dark:text-white capitalize">
-                  {contract.network}
+                  {selectedNetwork}
                 </dd>
               </div>
+              {configForNetwork && (
+                <>
+                  <div>
+                    <dt className="text-gray-500 dark:text-gray-400">Contract address</dt>
+                    <dd className="font-mono text-xs text-gray-900 dark:text-white break-all">
+                      {displayContractId}
+                    </dd>
+                  </div>
+                  {(configForNetwork.min_version ?? configForNetwork.max_version) && (
+                    <div>
+                      <dt className="text-gray-500 dark:text-gray-400">Version range</dt>
+                      <dd className="font-medium text-gray-900 dark:text-white">
+                        {[configForNetwork.min_version, configForNetwork.max_version]
+                          .filter(Boolean)
+                          .join(" – ") || "—"}
+                      </dd>
+                    </div>
+                  )}
+                </>
+              )}
               <div>
                 <dt className="text-gray-500 dark:text-gray-400">Published</dt>
                 <dd className="font-medium text-gray-900 dark:text-white">

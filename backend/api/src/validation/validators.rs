@@ -231,6 +231,33 @@ pub fn validate_json_depth(value: &serde_json::Value, max_depth: usize) -> Resul
     check_depth(value, 0, max_depth)
 }
 
+/// Validate per-network config version range (Issue #43).
+/// Ensures min_version and max_version are valid semver and min <= max when both present.
+pub fn validate_network_config_versions(
+    min_version: Option<&str>,
+    max_version: Option<&str>,
+) -> Result<(), String> {
+    if let Some(min) = min_version.filter(|s| !s.trim().is_empty()) {
+        validate_semver(min).map_err(|e| format!("min_version: {}", e))?;
+    }
+    if let Some(max) = max_version.filter(|s| !s.trim().is_empty()) {
+        validate_semver(max).map_err(|e| format!("max_version: {}", e))?;
+    }
+    if let (Some(min), Some(max)) = (
+        min_version.filter(|s| !s.trim().is_empty()),
+        max_version.filter(|s| !s.trim().is_empty()),
+    ) {
+        let a = shared::SemVer::parse(min.trim())
+            .ok_or_else(|| "min_version must be a valid semver (e.g. 1.0.0)".to_string())?;
+        let b = shared::SemVer::parse(max.trim())
+            .ok_or_else(|| "max_version must be a valid semver (e.g. 1.0.0)".to_string())?;
+        if a > b {
+            return Err("min_version must be less than or equal to max_version".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
