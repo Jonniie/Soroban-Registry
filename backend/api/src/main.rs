@@ -24,6 +24,15 @@ mod validation;
 // mod auth_handlers;
 // mod resource_handlers;
 // mod resource_tracking;
+mod analytics;
+mod breaking_changes;
+mod custom_metrics_handlers;
+mod dependency;
+mod deprecation_handlers;
+pub mod health_monitor;
+pub mod request_tracing;
+pub mod signing_handlers;
+mod type_safety;
 
 use anyhow::Result;
 use axum::http::{header, HeaderValue, Method};
@@ -75,6 +84,10 @@ async fn main() -> Result<()> {
     // Create app state
     let is_shutting_down = Arc::new(AtomicBool::new(false));
     let state = AppState::new(pool.clone(), registry, is_shutting_down.clone());
+    
+    // Warm up the cache
+    state.cache.clone().warm_up(pool.clone());
+
     let rate_limit_state = RateLimitState::from_env();
 
     let cors = CorsLayer::new()
