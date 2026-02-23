@@ -36,6 +36,7 @@ impl ErrorHandlingVisitor {
     }
 }
 
+
 impl<'ast> Visit<'ast> for ErrorHandlingVisitor {
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
         // Check if in test function
@@ -45,12 +46,18 @@ impl<'ast> Visit<'ast> for ErrorHandlingVisitor {
         
         let prev_test = self.in_test;
         self.in_test = is_test || self.in_test;
+// Delegate to the default visitor so it walks the block and calls
+// `visit_expr` for each expression.
+//
+// i intentionally do NOT call `visit_block` manually here.
+// `syn::visit::visit_item_fn` already handles that internally, and
+// calling both would cause every expression to be visited twice.
+// That would break the `in_test` flag on the second pass.
+//
+// Restore the previous test context after leaving this function.
+syn::visit::visit_item_fn(self, node);
 
-        // Visit the function body for unwrap/expect calls
-        self.visit_block(&node.block);
-
-        self.in_test = prev_test;
-        syn::visit::visit_item_fn(self, node);
+self.in_test = prev_test;
     }
 
     fn visit_expr(&mut self, node: &'ast syn::Expr) {
