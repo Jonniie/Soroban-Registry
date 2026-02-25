@@ -467,6 +467,9 @@ pub struct ContractInteraction {
     pub method: Option<String>,
     pub parameters: Option<serde_json::Value>,
     pub return_value: Option<serde_json::Value>,
+    pub interaction_timestamp: Option<DateTime<Utc>>,
+    pub interaction_count: Option<i64>,
+    pub network: Option<Network>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -493,6 +496,9 @@ pub struct InteractionsQueryParams {
     pub method: Option<String>,
     pub from_timestamp: Option<String>,
     pub to_timestamp: Option<String>,
+    pub days: Option<i64>,
+    pub interaction_type: Option<String>,
+    pub network: Option<Network>,
     pub cursor: Option<String>,
 }
 
@@ -504,11 +510,13 @@ fn default_interactions_limit() -> i64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInteractionRequest {
     pub account: Option<String>,
+    pub interaction_type: Option<String>,
     pub method: Option<String>,
     pub transaction_hash: Option<String>,
     pub parameters: Option<serde_json::Value>,
     pub return_value: Option<serde_json::Value>,
     pub timestamp: Option<DateTime<Utc>>,
+    pub network: Option<Network>,
 }
 
 /// Request body for POST /api/contracts/:id/interactions/batch
@@ -526,6 +534,23 @@ pub struct InteractionsListResponse {
     pub offset: i64,
     pub next_cursor: Option<String>,
     pub prev_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionTimeSeriesPoint {
+    pub date: chrono::NaiveDate,
+    pub interaction_type: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionTimeSeriesResponse {
+    pub contract_id: Uuid,
+    pub days: i64,
+    pub interactions_this_week: i64,
+    pub interactions_last_week: i64,
+    pub is_trending: bool,
+    pub series: Vec<InteractionTimeSeriesPoint>,
 }
 
 /// Migration status

@@ -131,6 +131,16 @@ async fn run_aggregation(pool: &PgPool) -> Result<(), sqlx::Error> {
         rows = rows_affected,
         "aggregation: daily summaries upserted"
     );
+
+    let interaction_rows: i64 =
+        sqlx::query_scalar("SELECT refresh_contract_interaction_daily_aggregates(2)")
+            .fetch_one(pool)
+            .await?;
+    tracing::info!(
+        interaction_rows,
+        "aggregation: contract interaction daily aggregates refreshed"
+    );
+
     Ok(())
 }
 
@@ -144,6 +154,17 @@ async fn cleanup_old_events(pool: &PgPool) -> Result<(), sqlx::Error> {
 
     if deleted > 0 {
         tracing::info!(deleted, "aggregation: cleaned up old raw events");
+    }
+
+    let archived_interactions: i64 =
+        sqlx::query_scalar("SELECT archive_old_contract_interactions(90)")
+            .fetch_one(pool)
+            .await?;
+    if archived_interactions > 0 {
+        tracing::info!(
+            archived_interactions,
+            "aggregation: archived old contract interactions"
+        );
     }
 
     Ok(())

@@ -16,8 +16,9 @@ use shared::{
     ContractAnalyticsResponse, ContractGetResponse, ContractInteractionResponse,
     ContractSearchParams, ContractVersion, CreateContractVersionRequest,
     CreateInteractionBatchRequest, CreateInteractionRequest, DeploymentStats,
-    InteractionsListResponse, InteractionsQueryParams, InteractorStats, Network, NetworkConfig,
-    PaginatedResponse, PublishRequest, Publisher, SemVer, TimelineEntry, TopUser,
+    InteractionTimeSeriesPoint, InteractionTimeSeriesResponse, InteractionsListResponse,
+    InteractionsQueryParams, InteractorStats, Network, NetworkConfig, PaginatedResponse,
+    PublishRequest, Publisher, SemVer, TimelineEntry, TopUser, TrendingParams,
     UpdateContractMetadataRequest, UpdateContractStatusRequest, VerifyRequest,
 };
 use std::time::Duration;
@@ -143,6 +144,104 @@ async fn write_contract_audit_log(
         .await?;
 
     Ok(())
+}
+
+fn parse_interaction_type(
+    interaction_type: Option<&str>,
+    method: Option<&str>,
+) -> Result<String, ApiError> {
+    let mut normalized = interaction_type
+        .map(|v| v.trim().to_ascii_lowercase())
+        .or_else(|| {
+            if method.is_some() {
+                Some("invoke".to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "invoke".to_string());
+
+    if normalized == "invocation" {
+        normalized = "invoke".to_string();
+    }
+
+    let valid = matches!(
+        normalized.as_str(),
+        "deploy" | "invoke" | "transfer" | "query" | "publish_success" | "publish_failed"
+    );
+
+    if !valid {
+        return Err(ApiError::bad_request(
+            "InvalidInteractionType",
+            format!(
+                "interaction_type '{}' is invalid; expected one of: deploy, invoke, transfer, query, publish_success, publish_failed",
+                normalized
+            ),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+async fn record_contract_interaction(
+    db: &sqlx::PgPool,
+    contract_id: Uuid,
+    account: Option<&str>,
+    interaction_type: &str,
+    transaction_hash: Option<&str>,
+    method: Option<&str>,
+    parameters: Option<&serde_json::Value>,
+    return_value: Option<&serde_json::Value>,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    network: &Network,
+) -> Result<Uuid, sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    let interaction_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO contract_interactions
+          (
+            contract_id, user_address, interaction_type, transaction_hash, method,
+            parameters, return_value, interaction_timestamp, interaction_count, network, created_at
+          )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10)
+        RETURNING id
+        "#,
+    )
+    .bind(contract_id)
+    .bind(account)
+    .bind(interaction_type)
+    .bind(transaction_hash)
+    .bind(method)
+    .bind(parameters)
+    .bind(return_value)
+    .bind(timestamp)
+    .bind(network)
+    .bind(timestamp)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO contract_interaction_daily_aggregates
+          (contract_id, interaction_type, network, day, count, updated_at)
+        VALUES ($1, $2, $3, $4, 1, NOW())
+        ON CONFLICT (contract_id, interaction_type, network, day)
+        DO UPDATE SET
+          count = contract_interaction_daily_aggregates.count + 1,
+          updated_at = NOW()
+        "#,
+    )
+    .bind(contract_id)
+    .bind(interaction_type)
+    .bind(network)
+    .bind(timestamp.date_naive())
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(interaction_id)
 }
 
 pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
@@ -931,6 +1030,21 @@ pub async fn publish_contract(
     .await
     .map_err(|err| db_internal_error("write contract_created audit log", err))?;
 
+    record_contract_interaction(
+        &state.db,
+        contract.id,
+        Some(&publisher.stellar_address),
+        "publish_success",
+        None,
+        None,
+        None,
+        None,
+        chrono::Utc::now(),
+        &contract.network,
+    )
+    .await
+    .map_err(|err| db_internal_error("record publish_success interaction", err))?;
+
     let _ = analytics::record_event(
         &state.db,
         AnalyticsEventType::ContractPublished,
@@ -1110,7 +1224,7 @@ pub async fn get_contract_analytics(
         )
     })?;
 
-    let _contract: Contract = sqlx::query_as("SELECT id FROM contracts WHERE id = $1")
+    let _contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -1300,8 +1414,108 @@ pub async fn get_impact_analysis(
     }))
 }
 
-pub async fn get_trending_contracts() -> impl IntoResponse {
-    Json(json!({"trending": []}))
+pub async fn get_trending_contracts(
+    State(state): State<AppState>,
+    Query(params): Query<TrendingParams>,
+) -> ApiResult<Json<Value>> {
+    let limit = params.limit.unwrap_or(10).clamp(1, 50);
+    let timeframe = params.timeframe.unwrap_or_else(|| "7d".to_string());
+    let trailing_days = match timeframe.as_str() {
+        "7d" => 7,
+        "30d" => 30,
+        "90d" => 90,
+        _ => {
+            return Err(ApiError::bad_request(
+                "InvalidTimeframe",
+                "timeframe must be one of: 7d, 30d, 90d",
+            ));
+        }
+    };
+
+    let rows: Vec<(Uuid, String, String, Network, i64, i64)> = sqlx::query_as(
+        r#"
+        WITH scored AS (
+            SELECT
+                c.id,
+                c.contract_id,
+                c.name,
+                c.network,
+                COALESCE(
+                    SUM(a.count) FILTER (WHERE a.day >= CURRENT_DATE - INTERVAL '6 days'),
+                    0
+                )::bigint AS interactions_this_week,
+                COALESCE(
+                    SUM(a.count) FILTER (
+                        WHERE a.day >= CURRENT_DATE - INTERVAL '13 days'
+                          AND a.day < CURRENT_DATE - INTERVAL '6 days'
+                    ),
+                    0
+                )::bigint AS interactions_last_week
+            FROM contracts c
+            LEFT JOIN contract_interaction_daily_aggregates a
+              ON a.contract_id = c.id
+             AND a.day >= CURRENT_DATE - make_interval(days => $1)
+            GROUP BY c.id, c.contract_id, c.name, c.network
+        )
+        SELECT
+            id,
+            contract_id,
+            name,
+            network,
+            interactions_this_week,
+            interactions_last_week
+        FROM scored
+        WHERE interactions_this_week > interactions_last_week * 1.5
+        ORDER BY
+            CASE
+                WHEN interactions_last_week = 0 THEN interactions_this_week::numeric
+                ELSE interactions_this_week::numeric / interactions_last_week::numeric
+            END DESC,
+            interactions_this_week DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(trailing_days)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("fetch trending contracts", err))?;
+
+    let trending: Vec<Value> = rows
+        .into_iter()
+        .map(
+            |(id, contract_id, name, network, interactions_this_week, interactions_last_week)| {
+                let ratio = if interactions_last_week == 0 {
+                    if interactions_this_week > 0 {
+                        serde_json::Value::String("inf".to_string())
+                    } else {
+                        serde_json::Value::from(0.0)
+                    }
+                } else {
+                    serde_json::Value::from(
+                        interactions_this_week as f64 / interactions_last_week as f64,
+                    )
+                };
+
+                json!({
+                    "id": id,
+                    "contract_id": contract_id,
+                    "name": name,
+                    "network": network,
+                    "interactions_this_week": interactions_this_week,
+                    "interactions_last_week": interactions_last_week,
+                    "ratio": ratio,
+                    "is_trending": true
+                })
+            },
+        )
+        .collect();
+
+    Ok(Json(json!({
+        "timeframe": timeframe,
+        "limit": limit,
+        "trending": trending
+    })))
 }
 
 pub async fn verify_contract(
@@ -1412,6 +1626,31 @@ pub async fn verify_contract(
                 .map_err(|err| db_internal_error("write status_changed audit log", err))?;
             }
 
+    record_contract_interaction(
+        &state.db,
+        contract.id,
+        None,
+        "publish_success",
+        None,
+        Some("verify"),
+        None,
+        None,
+        chrono::Utc::now(),
+        &contract.network,
+    )
+    .await
+    .map_err(|err| db_internal_error("record verification interaction", err))?;
+
+    let _ = analytics::record_event(
+        &state.db,
+        AnalyticsEventType::ContractVerified,
+        Some(contract.id),
+        Some(contract.publisher_id),
+        None,
+        Some(&contract.network),
+        Some(json!({ "verification_id": verification_id })),
+    )
+    .await;
             let _ = analytics::record_event(
                 &state.db,
                 AnalyticsEventType::ContractVerified,
@@ -1821,6 +2060,29 @@ pub async fn update_contract_status(
         .map_err(|err| db_internal_error("write status_changed audit log", err))?;
     }
 
+    if normalized_status == "verified" || normalized_status == "failed" {
+        let interaction_type = if normalized_status == "verified" {
+            "publish_success"
+        } else {
+            "publish_failed"
+        };
+
+        record_contract_interaction(
+            &state.db,
+            contract_uuid,
+            None,
+            interaction_type,
+            None,
+            Some("status_update"),
+            None,
+            None,
+            chrono::Utc::now(),
+            &contract.network,
+        )
+        .await
+        .map_err(|err| db_internal_error("record status interaction", err))?;
+    }
+
     Ok(Json(json!({
         "contract_id": contract_uuid,
         "verification_id": verification_id,
@@ -1843,7 +2105,7 @@ pub async fn get_contract_audit_log(
     let limit = params.limit.clamp(1, 500);
     let offset = params.offset.max(0);
 
-    let _contract: Contract = sqlx::query_as("SELECT id FROM contracts WHERE id = $1")
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -1924,7 +2186,7 @@ pub async fn get_contract_interactions(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(params): Query<InteractionsQueryParams>,
-) -> ApiResult<Json<InteractionsListResponse>> {
+) -> ApiResult<Json<Value>> {
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",
@@ -1932,7 +2194,7 @@ pub async fn get_contract_interactions(
         )
     })?;
 
-    let _contract: Contract = sqlx::query_as("SELECT id FROM contracts WHERE id = $1")
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -1943,6 +2205,75 @@ pub async fn get_contract_interactions(
             ),
             _ => db_internal_error("get contract for interactions", err),
         })?;
+
+    if let Some(days) = params.days {
+        let days = days.clamp(1, 365);
+
+        let series_rows: Vec<(chrono::NaiveDate, String, i64)> = sqlx::query_as(
+            r#"
+            SELECT day, interaction_type, SUM(count)::bigint AS count
+            FROM contract_interaction_daily_aggregates
+            WHERE contract_id = $1
+              AND day >= CURRENT_DATE - ($2::int - 1)
+              AND ($3::text IS NULL OR interaction_type = $3)
+              AND ($4::network_type IS NULL OR network = $4)
+            GROUP BY day, interaction_type
+            ORDER BY day ASC, interaction_type ASC
+            "#,
+        )
+        .bind(contract_uuid)
+        .bind(days as i32)
+        .bind(params.interaction_type.as_deref())
+        .bind(params.network.as_ref())
+        .fetch_all(&state.db)
+        .await
+        .map_err(|err| db_internal_error("fetch interaction time series", err))?;
+
+        let (interactions_this_week, interactions_last_week): (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE(
+                    SUM(count) FILTER (WHERE day >= CURRENT_DATE - INTERVAL '6 days'),
+                    0
+                )::bigint AS interactions_this_week,
+                COALESCE(
+                    SUM(count) FILTER (
+                        WHERE day >= CURRENT_DATE - INTERVAL '13 days'
+                          AND day < CURRENT_DATE - INTERVAL '6 days'
+                    ),
+                    0
+                )::bigint AS interactions_last_week
+            FROM contract_interaction_daily_aggregates
+            WHERE contract_id = $1
+              AND ($2::text IS NULL OR interaction_type = $2)
+              AND ($3::network_type IS NULL OR network = $3)
+            "#,
+        )
+        .bind(contract_uuid)
+        .bind(params.interaction_type.as_deref())
+        .bind(params.network.as_ref())
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| db_internal_error("fetch weekly interaction trend", err))?;
+
+        let response = InteractionTimeSeriesResponse {
+            contract_id: contract.id,
+            days,
+            interactions_this_week,
+            interactions_last_week,
+            is_trending: (interactions_this_week as f64) > (interactions_last_week as f64 * 1.5),
+            series: series_rows
+                .into_iter()
+                .map(|(date, interaction_type, count)| InteractionTimeSeriesPoint {
+                    date,
+                    interaction_type,
+                    count,
+                })
+                .collect(),
+        };
+
+        return Ok(Json(json!(response)));
+    }
 
     let limit = params.limit.clamp(1, 100);
 
@@ -1969,17 +2300,19 @@ pub async fn get_contract_interactions(
     let rows: Vec<shared::ContractInteraction> = sqlx::query_as(
         r#"
         SELECT id, contract_id, user_address, interaction_type, transaction_hash,
-               method, parameters, return_value, created_at
+               method, parameters, return_value, interaction_timestamp, interaction_count, network, created_at
         FROM contract_interactions
         WHERE contract_id = $1
           AND ($2::text IS NULL OR user_address = $2)
           AND ($3::text IS NULL OR method = $3)
           AND ($4::timestamptz IS NULL OR created_at >= $4)
           AND ($5::timestamptz IS NULL OR created_at <= $5)
+          AND ($6::text IS NULL OR interaction_type = $6)
+          AND ($7::network_type IS NULL OR network = $7)
           -- Cursor logic: tie-break with id
           AND ($8::timestamptz IS NULL OR (created_at < $8 OR (created_at = $8 AND id < $9)))
         ORDER BY created_at DESC, id DESC
-        LIMIT $6 OFFSET $7
+        LIMIT $10 OFFSET $11
         "#,
     )
     .bind(contract_uuid)
@@ -1987,10 +2320,12 @@ pub async fn get_contract_interactions(
     .bind(params.method.as_deref())
     .bind(from_ts)
     .bind(to_ts)
-    .bind(limit)
-    .bind(offset)
+    .bind(params.interaction_type.as_deref())
+    .bind(params.network.as_ref())
     .bind(cursor.as_ref().map(|c| c.timestamp))
     .bind(cursor.as_ref().map(|c| c.id))
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db)
     .await
     .map_err(|err| db_internal_error("list contract interactions", err))?;
@@ -2003,6 +2338,8 @@ pub async fn get_contract_interactions(
           AND ($3::text IS NULL OR method = $3)
           AND ($4::timestamptz IS NULL OR created_at >= $4)
           AND ($5::timestamptz IS NULL OR created_at <= $5)
+          AND ($6::text IS NULL OR interaction_type = $6)
+          AND ($7::network_type IS NULL OR network = $7)
         "#,
     )
     .bind(contract_uuid)
@@ -2010,6 +2347,8 @@ pub async fn get_contract_interactions(
     .bind(params.method.as_deref())
     .bind(from_ts)
     .bind(to_ts)
+    .bind(params.interaction_type.as_deref())
+    .bind(params.network.as_ref())
     .fetch_one(&state.db)
     .await
     .map_err(|err| db_internal_error("count contract interactions", err))?;
@@ -2065,7 +2404,7 @@ pub async fn post_contract_interaction(
         )
     })?;
 
-    let _contract: Contract = sqlx::query_as("SELECT id FROM contracts WHERE id = $1")
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -2077,38 +2416,34 @@ pub async fn post_contract_interaction(
             _ => db_internal_error("get contract for interaction", err),
         })?;
 
-    let interaction_type = req.method.as_deref().unwrap_or("invocation");
+    let interaction_type =
+        parse_interaction_type(req.interaction_type.as_deref(), req.method.as_deref())?;
     let created_at = req.timestamp.unwrap_or_else(chrono::Utc::now);
-
-    let row: (Uuid,) = sqlx::query_as(
-        r#"
-        INSERT INTO contract_interactions
-          (contract_id, user_address, interaction_type, transaction_hash, method, parameters, return_value, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id
-        "#,
+    let network = req.network.unwrap_or_else(|| contract.network.clone());
+    let interaction_id = record_contract_interaction(
+        &state.db,
+        contract_uuid,
+        req.account.as_deref(),
+        &interaction_type,
+        req.transaction_hash.as_deref(),
+        req.method.as_deref(),
+        req.parameters.as_ref(),
+        req.return_value.as_ref(),
+        created_at,
+        &network,
     )
-    .bind(contract_uuid)
-    .bind(req.account.as_deref())
-    .bind(interaction_type)
-    .bind(req.transaction_hash.as_deref())
-    .bind(req.method.as_deref())
-    .bind(req.parameters.as_ref())
-    .bind(req.return_value.as_ref())
-    .bind(created_at)
-    .fetch_one(&state.db)
     .await
     .map_err(|err| db_internal_error("insert contract interaction", err))?;
 
     tracing::info!(
         contract_id = %id,
-        interaction_id = %row.0,
+        interaction_id = %interaction_id,
         "contract interaction logged"
     );
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({ "id": row.0 })),
+        Json(serde_json::json!({ "id": interaction_id })),
     ))
 }
 
@@ -2125,7 +2460,7 @@ pub async fn post_contract_interactions_batch(
         )
     })?;
 
-    let _contract: Contract = sqlx::query_as("SELECT id FROM contracts WHERE id = $1")
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -2139,28 +2474,25 @@ pub async fn post_contract_interactions_batch(
 
     let mut ids = Vec::with_capacity(req.interactions.len());
     for i in &req.interactions {
-        let interaction_type = i.method.as_deref().unwrap_or("invocation");
+        let interaction_type =
+            parse_interaction_type(i.interaction_type.as_deref(), i.method.as_deref())?;
         let created_at = i.timestamp.unwrap_or_else(chrono::Utc::now);
-        let row: (Uuid,) = sqlx::query_as(
-            r#"
-            INSERT INTO contract_interactions
-              (contract_id, user_address, interaction_type, transaction_hash, method, parameters, return_value, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id
-            "#,
+        let network = i.network.clone().unwrap_or_else(|| contract.network.clone());
+        let interaction_id = record_contract_interaction(
+            &state.db,
+            contract_uuid,
+            i.account.as_deref(),
+            &interaction_type,
+            i.transaction_hash.as_deref(),
+            i.method.as_deref(),
+            i.parameters.as_ref(),
+            i.return_value.as_ref(),
+            created_at,
+            &network,
         )
-        .bind(contract_uuid)
-        .bind(i.account.as_deref())
-        .bind(interaction_type)
-        .bind(i.transaction_hash.as_deref())
-        .bind(i.method.as_deref())
-        .bind(i.parameters.as_ref())
-        .bind(i.return_value.as_ref())
-        .bind(created_at)
-        .fetch_one(&state.db)
         .await
         .map_err(|err| db_internal_error("insert contract interaction batch", err))?;
-        ids.push(row.0);
+        ids.push(interaction_id);
     }
 
     tracing::info!(

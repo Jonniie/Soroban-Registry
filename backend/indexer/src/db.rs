@@ -106,6 +106,54 @@ impl DatabaseWriter {
             DatabaseError::SqlError(e.to_string())
         })?;
 
+        sqlx::query(
+            r#"
+            INSERT INTO contract_interactions
+              (
+                contract_id, user_address, interaction_type, transaction_hash,
+                method, parameters, return_value, interaction_timestamp, interaction_count, network, created_at
+              )
+            VALUES ($1, $2, 'deploy', NULL, NULL, NULL, NULL, $3, 1, $4::network_type, $3)
+            "#,
+        )
+        .bind(contract_id)
+        .bind(Some(deployment.deployer.as_str()))
+        .bind(now)
+        .bind(network_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to insert deploy interaction for contract {}: {}",
+                deployment.contract_id, e
+            );
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO contract_interaction_daily_aggregates
+              (contract_id, interaction_type, network, day, count, updated_at)
+            VALUES ($1, 'deploy', $2::network_type, $3, 1, NOW())
+            ON CONFLICT (contract_id, interaction_type, network, day)
+            DO UPDATE SET
+              count = contract_interaction_daily_aggregates.count + 1,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(contract_id)
+        .bind(network_str)
+        .bind(now.date_naive())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to update deploy daily aggregate for contract {}: {}",
+                deployment.contract_id, e
+            );
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
         info!(
             "Contract record created: contract_id={}, network={}, publisher={}",
             deployment.contract_id, network_str, deployment.deployer
