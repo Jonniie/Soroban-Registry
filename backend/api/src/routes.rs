@@ -4,6 +4,7 @@ use axum::{
 };
 
 use crate::{
+    batch_verify_handlers,
     handlers,
     metrics_handler,
     breaking_changes,
@@ -18,8 +19,7 @@ pub fn observability_routes() -> Router<AppState> {
 
 pub fn contract_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/contracts", get(handlers::list_contracts))
-        .route("/api/contracts", post(handlers::publish_contract))
+        .route("/api/contracts", get(handlers::list_contracts).post(handlers::publish_contract))
         .route("/api/contracts/trending", get(handlers::get_trending_contracts))
         .route("/api/contracts/graph", get(handlers::get_contract_graph))
         .route("/api/contracts/:id", get(handlers::get_contract))
@@ -28,7 +28,6 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/:id/openapi.json", get(handlers::get_contract_openapi_json))
         .route("/api/contracts/:id/versions", get(handlers::get_contract_versions).post(handlers::create_contract_version))
         .route("/api/contracts/breaking-changes", get(breaking_changes::get_breaking_changes))
-        .route("/api/contracts/:id/versions", get(handlers::get_contract_versions))
         .route(
             "/api/contracts/:id/interactions",
             get(handlers::get_contract_interactions).post(handlers::post_contract_interaction),
@@ -45,6 +44,10 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/:id/dependencies", get(handlers::get_contract_dependencies))
         .route("/api/contracts/:id/dependents", get(handlers::get_contract_dependents))
         .route("/api/contracts/verify", post(handlers::verify_contract))
+        .route(
+            "/api/contracts/batch-verify",
+            post(batch_verify_handlers::batch_verify_contracts),
+        )
         .route(
             "/api/contracts/:id/performance",
             get(handlers::get_contract_performance),
