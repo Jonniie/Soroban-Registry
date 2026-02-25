@@ -1,6 +1,5 @@
 /// State persistence module
 /// Tracks and persists the last indexed ledger height for safe resume after restarts
-
 use shared::Network;
 use sqlx::PgPool;
 use sqlx::Row;
@@ -22,6 +21,7 @@ pub enum StateError {
 pub struct IndexerState {
     pub network: Network,
     pub last_indexed_ledger_height: u64,
+    pub last_indexed_ledger_hash: Option<String>,
     pub last_checkpoint_ledger_height: u64,
     pub consecutive_failures: i32,
 }
@@ -68,6 +68,7 @@ impl StateManager {
             SELECT 
                 network::text,
                 last_indexed_ledger_height,
+                last_indexed_ledger_hash,
                 last_checkpoint_ledger_height,
                 consecutive_failures
             FROM indexer_state
@@ -83,42 +84,50 @@ impl StateManager {
 
         Ok(IndexerState {
             network: network.clone(),
-            last_indexed_ledger_height: row.try_get::<i64, _>("last_indexed_ledger_height").unwrap_or(0) as u64,
-            last_checkpoint_ledger_height: row.try_get::<i64, _>("last_checkpoint_ledger_height").unwrap_or(0) as u64,
+            last_indexed_ledger_height: row
+                .try_get::<i64, _>("last_indexed_ledger_height")
+                .unwrap_or(0) as u64,
+            last_indexed_ledger_hash: row
+                .try_get::<Option<String>, _>("last_indexed_ledger_hash")
+                .unwrap_or(None),
+            last_checkpoint_ledger_height: row
+                .try_get::<i64, _>("last_checkpoint_ledger_height")
+                .unwrap_or(0) as u64,
             consecutive_failures: row.try_get::<i32, _>("consecutive_failures").unwrap_or(0),
         })
     }
 
     /// Update state after successfully processing a ledger
-    pub async fn update_state(
-        &self,
-        state: &IndexerState,
-    ) -> Result<(), StateError> {
+    pub async fn update_state(&self, state: &IndexerState) -> Result<(), StateError> {
         let network_str = network_to_str(&state.network);
         debug!(
             "Updating indexer state: network={}, ledger_height={}",
             network_str, state.last_indexed_ledger_height
         );
 
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             UPDATE indexer_state
             SET 
                 last_indexed_ledger_height = $1,
-                last_checkpoint_ledger_height = $2,
-                consecutive_failures = $3,
+                last_indexed_ledger_hash = $2,
+                last_checkpoint_ledger_height = $3,
+                consecutive_failures = $4,
                 indexed_at = NOW()
-            WHERE network = $4::network_type
-        "#)
-            .bind(state.last_indexed_ledger_height as i64)
-            .bind(state.last_checkpoint_ledger_height as i64)
-            .bind(state.consecutive_failures)
-            .bind(network_str)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to update indexer state: {}", e);
-                StateError::DatabaseError(e.to_string())
-            })?;
+            WHERE network = $5::network_type
+        "#,
+        )
+        .bind(state.last_indexed_ledger_height as i64)
+        .bind(&state.last_indexed_ledger_hash)
+        .bind(state.last_checkpoint_ledger_height as i64)
+        .bind(state.consecutive_failures)
+        .bind(network_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to update indexer state: {}", e);
+            StateError::DatabaseError(e.to_string())
+        })?;
 
         info!(
             "State updated successfully: network={}, ledger_height={}",
@@ -140,21 +149,23 @@ impl StateManager {
             network_str, checkpoint_height
         );
 
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             UPDATE indexer_state
             SET 
                 last_checkpoint_ledger_height = $1,
                 checkpoint_at = NOW()
             WHERE network = $2::network_type
-        "#)
-            .bind(checkpoint_height as i64)
-            .bind(network_str)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to update checkpoint: {}", e);
-                StateError::DatabaseError(e.to_string())
-            })?;
+        "#,
+        )
+        .bind(checkpoint_height as i64)
+        .bind(network_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to update checkpoint: {}", e);
+            StateError::DatabaseError(e.to_string())
+        })?;
 
         info!(
             "Checkpoint updated: network={}, height={}",
@@ -176,19 +187,21 @@ impl StateManager {
             network_str, error_message
         );
 
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             UPDATE indexer_state
             SET 
                 error_message = $1,
                 consecutive_failures = consecutive_failures + 1,
                 updated_at = NOW()
             WHERE network = $2::network_type
-        "#)
-            .bind(error_message)
-            .bind(network_str)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StateError::DatabaseError(e.to_string()))?;
+        "#,
+        )
+        .bind(error_message)
+        .bind(network_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StateError::DatabaseError(e.to_string()))?;
 
         Ok(())
     }
@@ -224,8 +237,12 @@ impl StateManager {
 
                 Some(IndexerState {
                     network,
-                    last_indexed_ledger_height: row.try_get::<i64, _>("last_indexed_ledger_height").ok()? as u64,
-                    last_checkpoint_ledger_height: row.try_get::<i64, _>("last_checkpoint_ledger_height").ok()? as u64,
+                    last_indexed_ledger_height: row
+                        .try_get::<i64, _>("last_indexed_ledger_height")
+                        .ok()? as u64,
+                    last_checkpoint_ledger_height: row
+                        .try_get::<i64, _>("last_checkpoint_ledger_height")
+                        .ok()? as u64,
                     consecutive_failures: row.try_get("consecutive_failures").ok()?,
                 })
             })

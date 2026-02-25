@@ -12,7 +12,6 @@
 /// - Handles RPC failures with exponential backoff
 /// - Detects and recovers from ledger reorgs
 /// - Provides structured logging for observability
-
 mod backoff;
 mod config;
 mod db;
@@ -77,7 +76,11 @@ impl IndexerService {
         );
 
         // Load initial state
-        let mut state = match self.state_manager.load_state(&self.config.network.network).await {
+        let mut state = match self
+            .state_manager
+            .load_state(&self.config.network.network)
+            .await
+        {
             Ok(s) => {
                 info!(
                     "Loaded indexer state: last_indexed_ledger={}",
@@ -186,6 +189,17 @@ impl IndexerService {
         for i in 0..ledgers_to_process {
             let ledger_height = next_ledger + i;
 
+            // Fetch ledger details to get the hash
+            let ledger = self.rpc_client.get_ledger(ledger_height).await.map_err(|e| {
+                error!(
+                    network = network_name,
+                    ledger = ledger_height,
+                    error = %e,
+                    "Failed to fetch ledger details"
+                );
+                e
+            })?;
+
             // Fetch ledger operations
             match self.rpc_client.get_ledger_operations(ledger_height).await {
                 Ok(operations) => {
@@ -238,6 +252,7 @@ impl IndexerService {
 
                     // Update state
                     state.last_indexed_ledger_height = ledger_height;
+                    state.last_indexed_ledger_hash = Some(ledger.hash);
                     state.clear_failures();
 
                     // Check if we should update checkpoint
@@ -322,36 +337,32 @@ async fn main() -> Result<()> {
 
 /// Signal handling support
 mod signal_support {
-    use std::future::Future;
+    pub async fn create_shutdown_signal() {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
 
-    pub fn create_shutdown_signal() -> impl Future<Output = ()> {
-        async {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
 
-                let mut sigterm = signal(SignalKind::terminate())
-                    .expect("Failed to register SIGTERM handler");
-                let mut sigint = signal(SignalKind::interrupt())
-                    .expect("Failed to register SIGINT handler");
-
-                tokio::select! {
-                    _ = sigterm.recv() => {
-                        tracing::info!("Received SIGTERM");
-                    }
-                    _ = sigint.recv() => {
-                        tracing::info!("Received SIGINT");
-                    }
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM");
+                }
+                _ = sigint.recv() => {
+                    tracing::info!("Received SIGINT");
                 }
             }
+        }
 
-            #[cfg(windows)]
-            {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to listen for Ctrl+C");
-                tracing::info!("Received Ctrl+C");
-            }
+        #[cfg(windows)]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to listen for Ctrl+C");
+            tracing::info!("Received Ctrl+C");
         }
     }
 }

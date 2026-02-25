@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 mod backup;
+mod batch_verify;
 mod commands;
 mod config;
 mod conversions;
@@ -17,9 +18,11 @@ mod migration;
 mod multisig;
 mod package_signing;
 mod patch;
+mod release_notes;
 mod profiler;
 mod sla;
 mod test_framework;
+mod webhook;
 mod wizard;
 
 use anyhow::Result;
@@ -59,6 +62,18 @@ pub enum Commands {
         /// Only show verified contracts
         #[arg(long)]
         verified_only: bool,
+        /// Filter by one or more networks (comma-separated: mainnet,testnet,futurenet)
+        #[arg(long)]
+        networks: Option<String>,
+        /// Filter by contract category (e.g. DEX, token, lending, oracle)
+        #[arg(long)]
+        category: Option<String>,
+        /// Maximum number of results to return
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Number of results to skip (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
         /// Output results as machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -383,10 +398,159 @@ pub enum Commands {
         signature: Option<String>,
     },
 
+    /// Verify a contract binary against an Ed25519 signature locally
+    VerifyContract {
+        /// Path to the contract WASM/binary file
+        wasm_path: String,
+
+        /// Contract ID used when signing
+        #[arg(long)]
+        contract_id: String,
+
+        /// Contract version used when signing
+        #[arg(long)]
+        version: String,
+
+        /// Ed25519 signature (base64)
+        #[arg(long)]
+        signature: String,
+
+        /// Ed25519 public key (base64)
+        #[arg(long)]
+        public_key: String,
+    },
+
     /// Manage signing keys and signatures
     Keys {
         #[command(subcommand)]
         action: KeysCommands,
+    },
+
+    /// Verify multiple contracts in a single atomic batch (all succeed or all rollback)
+    BatchVerify {
+        /// Comma-separated list of contract IDs to verify.
+        /// Optionally suffix with @version (e.g. abc123@1.0.0,def456)
+        #[arg(long)]
+        contracts: String,
+
+        /// Stellar address or username initiating the batch (recorded in audit log)
+        #[arg(long)]
+        initiated_by: String,
+
+        /// Output results as machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage webhooks for contract lifecycle events
+    Webhook {
+        #[command(subcommand)]
+        action: WebhookCommands,
+    },
+
+    /// Auto-generate and manage release notes for contract versions
+    ReleaseNotes {
+        #[command(subcommand)]
+        action: ReleaseNotesCommands,
+    },
+}
+
+/// Sub-commands for the `release-notes` group
+#[derive(Debug, Subcommand)]
+pub enum ReleaseNotesCommands {
+    /// Auto-generate release notes from code diff and changelog
+    Generate {
+        /// Contract registry ID (UUID or on-chain ID)
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to generate notes for (semver, e.g. 1.2.0)
+        #[arg(long)]
+        version: String,
+
+        /// Previous version to diff against (auto-detected if omitted)
+        #[arg(long)]
+        previous_version: Option<String>,
+
+        /// Path to CHANGELOG.md file (auto-detected if present in cwd)
+        #[arg(long)]
+        changelog: Option<String>,
+
+        /// On-chain contract address to include in notes
+        #[arg(long)]
+        contract_address: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// View generated release notes for a version
+    View {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to view
+        #[arg(long)]
+        version: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Edit draft release notes before publishing
+    Edit {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to edit
+        #[arg(long)]
+        version: String,
+
+        /// Path to a file containing the new release notes text
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Inline text for the release notes
+        #[arg(long)]
+        text: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Publish (finalize) release notes
+    Publish {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to publish
+        #[arg(long)]
+        version: String,
+
+        /// Skip updating the contract_versions.release_notes column
+        #[arg(long)]
+        skip_version_update: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List all release notes for a contract
+    List {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -608,7 +772,74 @@ pub enum KeysCommands {
     },
 }
 
-/// Sub-commands for contract migration workflow
+/// Sub-commands for the `webhook` group
+#[derive(Debug, Subcommand)]
+pub enum WebhookCommands {
+    /// Register a new webhook subscription
+    Create {
+        /// Endpoint URL to receive events (must be HTTPS in production)
+        #[arg(long)]
+        url: String,
+
+        /// Comma-separated list of events to subscribe to.
+        /// Valid: contract.published, contract.verified,
+        ///        contract.failed_verification, version.created
+        #[arg(long)]
+        events: String,
+
+        /// Optional HMAC-SHA256 secret key (auto-generated if omitted)
+        #[arg(long)]
+        secret: Option<String>,
+    },
+
+    /// List all registered webhooks
+    List {},
+
+    /// Delete a webhook by ID
+    Delete {
+        /// Webhook ID to delete
+        webhook_id: String,
+    },
+
+    /// Send a test event to a webhook
+    Test {
+        /// Webhook ID to test
+        webhook_id: String,
+    },
+
+    /// View delivery logs for a webhook
+    Logs {
+        /// Webhook ID
+        webhook_id: String,
+
+        /// Maximum number of log entries to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Manually retry a dead-letter delivery
+    Retry {
+        /// Delivery ID to retry
+        delivery_id: String,
+    },
+
+    /// Verify a webhook payload signature locally
+    VerifySig {
+        /// HMAC secret key used for signing
+        #[arg(long)]
+        secret: String,
+
+        /// Raw JSON payload body
+        #[arg(long)]
+        payload: String,
+
+        /// Signature header value (e.g. sha256=abc123...)
+        #[arg(long)]
+        signature: String,
+    },
+}
+
+/// Sub-commands for the `migrate` group
 #[derive(Debug, Subcommand)]
 pub enum MigrateCommands {
     /// Preview migration outcome (dry-run)
@@ -677,14 +908,34 @@ async fn main() -> Result<()> {
         Commands::Search {
             query,
             verified_only,
+            networks,
+            category,
+            limit,
+            offset,
             json,
         } => {
+            let networks_vec: Vec<String> = networks
+                .map(|n| n.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default();
             log::debug!(
-                "Command: search | query={:?} verified_only={}",
+                "Command: search | query={:?} verified_only={} networks={:?} category={:?}",
                 query,
-                verified_only
+                verified_only,
+                networks_vec,
+                category
             );
-            commands::search(&cli.api_url, &query, network, verified_only, json).await?;
+            commands::search(
+                &cli.api_url,
+                &query,
+                network,
+                verified_only,
+                networks_vec,
+                category.as_deref(),
+                limit,
+                offset,
+                json,
+            )
+            .await?;
         }
         Commands::Info { contract_id } => {
             log::debug!("Command: info | contract_id={}", contract_id);
@@ -992,7 +1243,23 @@ async fn main() -> Result<()> {
             compare,
             recommendations,
         } => {
-            println!("Profile command is temporarily disabled");
+            log::debug!(
+                "Command: profile | contract_path={} method={:?} output={:?} flamegraph={:?} compare={:?} recommendations={}",
+                contract_path,
+                method,
+                output,
+                flamegraph,
+                compare,
+                recommendations
+            );
+            commands::profile(
+                &contract_path,
+                method.as_deref(),
+                output.as_deref(),
+                flamegraph.as_deref(),
+                compare.as_deref(),
+                recommendations,
+            )?;
         }
         Commands::Test {
             test_file,
@@ -1144,6 +1411,27 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::VerifyContract {
+            wasm_path,
+            contract_id,
+            version,
+            signature,
+            public_key,
+        } => {
+            log::debug!(
+                "Command: verify-contract | wasm_path={} contract_id={} version={}",
+                wasm_path,
+                contract_id,
+                version
+            );
+            package_signing::verify_contract_local(
+                &wasm_path,
+                &contract_id,
+                &version,
+                &signature,
+                &public_key,
+            )?;
+        }
         Commands::Keys { action } => match action {
             KeysCommands::Generate {} => {
                 log::debug!("Command: keys generate");
@@ -1180,6 +1468,142 @@ async fn main() -> Result<()> {
                     limit,
                 )
                 .await?;
+            }
+        },
+        Commands::BatchVerify {
+            contracts,
+            initiated_by,
+            json,
+        } => {
+            log::debug!(
+                "Command: batch-verify | contracts={} initiated_by={}",
+                contracts,
+                initiated_by
+            );
+            batch_verify::run_batch_verify(&cli.api_url, &contracts, &initiated_by, json).await?;
+        }
+        Commands::Webhook { action } => match action {
+            WebhookCommands::Create { url, events, secret } => {
+                let event_list: Vec<String> =
+                    events.split(',').map(|s| s.trim().to_string()).collect();
+                log::debug!("Command: webhook create | url={} events={:?}", url, event_list);
+                webhook::create_webhook(&cli.api_url, &url, event_list, secret.as_deref())
+                    .await?;
+            }
+            WebhookCommands::List {} => {
+                log::debug!("Command: webhook list");
+                webhook::list_webhooks(&cli.api_url).await?;
+            }
+            WebhookCommands::Delete { webhook_id } => {
+                log::debug!("Command: webhook delete | id={}", webhook_id);
+                webhook::delete_webhook(&cli.api_url, &webhook_id).await?;
+            }
+            WebhookCommands::Test { webhook_id } => {
+                log::debug!("Command: webhook test | id={}", webhook_id);
+                webhook::test_webhook(&cli.api_url, &webhook_id).await?;
+            }
+            WebhookCommands::Logs { webhook_id, limit } => {
+                log::debug!("Command: webhook logs | id={} limit={}", webhook_id, limit);
+                webhook::webhook_logs(&cli.api_url, &webhook_id, limit).await?;
+            }
+            WebhookCommands::Retry { delivery_id } => {
+                log::debug!("Command: webhook retry | delivery_id={}", delivery_id);
+                webhook::retry_delivery(&cli.api_url, &delivery_id).await?;
+            }
+            WebhookCommands::VerifySig { secret, payload, signature } => {
+                log::debug!("Command: webhook verify-sig");
+                webhook::verify_signature_cmd(&secret, &payload, &signature)?;
+            }
+        },
+        // ── Release Notes commands ───────────────────────────────────────────
+        Commands::ReleaseNotes { action } => match action {
+            ReleaseNotesCommands::Generate {
+                contract_id,
+                version,
+                previous_version,
+                changelog,
+                contract_address,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes generate | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::generate(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    previous_version.as_deref(),
+                    changelog.as_deref(),
+                    contract_address.as_deref(),
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::View {
+                contract_id,
+                version,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes view | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::view(&cli.api_url, &contract_id, &version, json).await?;
+            }
+            ReleaseNotesCommands::Edit {
+                contract_id,
+                version,
+                file,
+                text,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes edit | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::edit(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    file.as_deref(),
+                    text.as_deref(),
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::Publish {
+                contract_id,
+                version,
+                skip_version_update,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes publish | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::publish(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    skip_version_update,
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::List {
+                contract_id,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes list | contract_id={}",
+                    contract_id
+                );
+                release_notes::list(&cli.api_url, &contract_id, json).await?;
             }
         },
     }

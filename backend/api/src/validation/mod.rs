@@ -70,8 +70,9 @@ pub use sanitizers::{
     trim, trim_optional,
 };
 pub use validators::{
-    validate_contract_id, validate_length, validate_network_config_versions, validate_no_html,
-    validate_no_xss, validate_required, validate_semver, validate_source_code_size,
-    validate_stellar_address, validate_stellar_address_optional, validate_tags, validate_url,
-    validate_url_optional,
+    validate_category_whitelist, validate_contract_id, validate_length, validate_name_format,
+    validate_network_config_versions, validate_no_html, validate_no_xss, validate_required,
+    validate_semver, validate_source_code_size, validate_stellar_address,
+    validate_stellar_address_optional, validate_tags, validate_url, validate_url_optional,
+    validate_wasm_hash,
 };

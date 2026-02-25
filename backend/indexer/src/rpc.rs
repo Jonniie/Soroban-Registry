@@ -1,6 +1,5 @@
 /// RPC client for polling Stellar network ledgers
 /// Handles HTTP requests to Stellar RPC endpoints and deserializes ledger/operation data
-
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
@@ -219,15 +218,15 @@ impl StellarRpcClient {
         }
 
         // Parse the response - it returns an array
-        let response_text = response.text().await.map_err(|e| {
-            RpcError::InvalidResponse(format!("Failed to read response: {}", e))
-        })?;
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| RpcError::InvalidResponse(format!("Failed to read response: {}", e)))?;
 
-        let data: serde_json::Value = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                error!("Invalid JSON in ledger response: {}", e);
-                RpcError::InvalidResponse(format!("Invalid JSON: {}", e))
-            })?;
+        let data: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
+            error!("Invalid JSON in ledger response: {}", e);
+            RpcError::InvalidResponse(format!("Invalid JSON: {}", e))
+        })?;
 
         // Extract first ledger from _embedded records
         let ledgers = data
