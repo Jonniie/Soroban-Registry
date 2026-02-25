@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
     state.cache.clone().warm_up(pool.clone());
 
     let rate_limit_state = RateLimitState::from_env();
-    rate_limit_state.spawn_eviction_task(); 
+    rate_limit_state.spawn_eviction_task();
 
     let allowed_origins = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
         "http://localhost:3000,https://soroban-registry.vercel.app".to_string()
@@ -231,7 +231,7 @@ async fn main() -> Result<()> {
 
         let start_time = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-        
+
         let mut success = false;
         loop {
             let in_flight = crate::metrics::HTTP_IN_FLIGHT.get();
@@ -256,7 +256,7 @@ async fn main() -> Result<()> {
 
         tracing::info!("Closing database connections cleanly...");
         pool.close().await;
-        
+
         let shutdown_duration = start_time.elapsed();
         tracing::info!(
             "Shutdown complete. Duration: {}ms",
