@@ -1,3 +1,4 @@
+use crate::validation::extractors::ValidatedJson;
 use axum::{
     extract::{
         rejection::{JsonRejection, QueryRejection},
@@ -10,15 +11,17 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::{json, Value};
-use std::time::Duration;
 use shared::{
-    Contract, ContractAnalyticsResponse, ContractGetResponse, ContractInteractionResponse,
+    pagination::Cursor, AnalyticsEventType, ChangePublisherRequest, Contract,
+    ContractAnalyticsResponse, ContractGetResponse, ContractInteractionResponse,
     ContractSearchParams, ContractVersion, CreateContractVersionRequest,
     CreateInteractionBatchRequest, CreateInteractionRequest, DeploymentStats,
     InteractionTimeSeriesPoint, InteractionTimeSeriesResponse, InteractionsListResponse,
     InteractionsQueryParams, InteractorStats, Network, NetworkConfig, PaginatedResponse,
     PublishRequest, Publisher, SemVer, TimelineEntry, TopUser, TrendingParams,
+    UpdateContractMetadataRequest, UpdateContractStatusRequest, VerifyRequest,
 };
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Query params for GET /contracts/:id (Issue #43)
@@ -28,6 +31,7 @@ pub struct GetContractQuery {
 }
 
 use crate::{
+    analytics,
     breaking_changes::{diff_abi, has_breaking_changes, resolve_abi},
     dependency,
     error::{ApiError, ApiResult},
@@ -86,28 +90,6 @@ pub struct AuditLogQuery {
 
 fn default_audit_limit() -> i64 {
     100
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct UpdateContractMetadataRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub category: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub user_id: Option<Uuid>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ChangePublisherRequest {
-    pub publisher_address: String,
-    pub user_id: Option<Uuid>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct UpdateContractStatusRequest {
-    pub status: String,
-    pub error_message: Option<String>,
-    pub user_id: Option<Uuid>,
 }
 
 fn extract_ip_address(headers: &HeaderMap) -> String {
@@ -349,9 +331,17 @@ pub async fn list_contracts(
         Err(err) => return map_query_rejection(err).into_response(),
     };
 
-    let page = params.page.unwrap_or(1).max(1);
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = (page - 1).max(0) * limit;
+
+    // Cursor logic
+    let cursor = params.cursor.as_ref().and_then(|c| Cursor::decode(c).ok());
+
+    let (page, offset) = if cursor.is_some() {
+        (1, 0) // Ignore page/offset if cursor is present
+    } else {
+        let p = params.page.unwrap_or(1).max(1);
+        (p, (p - 1).max(0) * limit)
+    };
 
     let sort_by = params.sort_by.clone().unwrap_or_else(|| {
         if params.query.is_some() {
@@ -361,6 +351,8 @@ pub async fn list_contracts(
         }
     });
     let sort_order = params.sort_order.clone().unwrap_or(shared::SortOrder::Desc);
+
+    let is_timestamp_sort = matches!(sort_by, shared::SortBy::CreatedAt);
 
     // Build dynamic query with aggregations
     let mut query = String::from(
@@ -413,6 +405,26 @@ pub async fn list_contracts(
         count_query.push_str(&network_clause);
     }
 
+    // Apply cursor filter if available and sorting by timestamp
+    if let Some(cursor) = cursor {
+        if is_timestamp_sort {
+            let direction_op = if sort_order == shared::SortOrder::Asc {
+                ">"
+            } else {
+                "<"
+            };
+            let cursor_clause = format!(
+                " AND (c.created_at {} '{}' OR (c.created_at = '{}' AND c.id {} '{}'))",
+                direction_op,
+                cursor.timestamp.to_rfc3339(),
+                cursor.timestamp.to_rfc3339(),
+                direction_op,
+                cursor.id
+            );
+            query.push_str(&cursor_clause);
+        }
+    }
+
     query.push_str(" GROUP BY c.id");
 
     // Sorting logic using aggregations in ORDER BY
@@ -458,11 +470,26 @@ pub async fn list_contracts(
         Err(err) => return db_internal_error("count filtered contracts", err).into_response(),
     };
 
-    (
-        StatusCode::OK,
-        Json(PaginatedResponse::new(contracts, total, page, limit)),
-    )
-        .into_response()
+    let mut response = PaginatedResponse::new(contracts, total, page, limit);
+
+    // Generate next cursor if we have full page
+    if response.items.len() >= limit as usize {
+        if let Some(last) = response.items.last() {
+            let next_cursor = Cursor::new(last.created_at, last.id).encode();
+            response.next_cursor = Some(next_cursor);
+        }
+    }
+
+    // Generate prev cursor if we have items and are not on the first page
+    // (Simplification: if we have a cursor, or page > 1)
+    if params.cursor.is_some() || page > 1 {
+        if let Some(first) = response.items.first() {
+            let prev_cursor = Cursor::new(first.created_at, first.id).encode();
+            response.prev_cursor = Some(prev_cursor);
+        }
+    }
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 /// Get a specific contract by ID. Optional ?network= returns network-specific config (Issue #43).
@@ -540,10 +567,8 @@ pub async fn get_contract_versions(
 pub async fn create_contract_version(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<CreateContractVersionRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<CreateContractVersionRequest>,
 ) -> ApiResult<Json<ContractVersion>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
-
     let (contract_uuid, contract_id) = fetch_contract_identity(&state, &id).await?;
     if !req.contract_id.trim().is_empty() && req.contract_id != contract_id {
         return Err(ApiError::bad_request(
@@ -747,7 +772,10 @@ pub async fn create_contract_version(
 
     state.cache.invalidate_abi(&contract_id).await;
     state.cache.invalidate_abi(&contract_uuid.to_string()).await;
-    state.cache.invalidate_abi(&format!("{}@{}", contract_id, req.version)).await;
+    state
+        .cache
+        .invalidate_abi(&format!("{}@{}", contract_id, req.version))
+        .await;
 
     // Post-commit dependency analysis
     let detected_deps = dependency::detect_dependencies_from_abi(&req.abi);
@@ -767,6 +795,17 @@ pub async fn create_contract_version(
             .invalidate("system", "global:dependency_graph")
             .await;
     }
+
+    let _ = analytics::record_event(
+        &state.db,
+        AnalyticsEventType::VersionCreated,
+        Some(version_row.contract_id),
+        None, // Version creation usually doesn't need publisher_id explicitly if we have contract_id
+        None,
+        None,
+        Some(json!({ "version": version_row.version })),
+    )
+    .await;
 
     Ok(Json(version_row))
 }
@@ -807,10 +846,8 @@ async fn fetch_contract_identity(state: &AppState, id: &str) -> ApiResult<(Uuid,
 pub async fn publish_contract(
     State(state): State<AppState>,
     headers: HeaderMap,
-    payload: Result<Json<PublishRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<PublishRequest>,
 ) -> ApiResult<Json<Contract>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
-
     crate::validation::validate_contract_id(&req.contract_id)
         .map_err(|e| ApiError::bad_request("InvalidContractId", e))?;
 
@@ -938,15 +975,24 @@ pub async fn publish_contract(
     .await
     .map_err(|err| db_internal_error("record publish_success interaction", err))?;
 
+    let _ = analytics::record_event(
+        &state.db,
+        AnalyticsEventType::ContractPublished,
+        Some(contract.id),
+        Some(publisher.id),
+        None,
+        Some(&contract.network),
+        Some(json!({ "name": contract.name })),
+    )
+    .await;
+
     Ok(Json(contract))
 }
 
 pub async fn create_publisher(
     State(state): State<AppState>,
-    payload: Result<Json<Publisher>, JsonRejection>,
+    ValidatedJson(publisher): ValidatedJson<Publisher>,
 ) -> ApiResult<Json<Publisher>> {
-    let Json(publisher) = payload.map_err(map_json_rejection)?;
-
     let created: Publisher = sqlx::query_as(
         "INSERT INTO publishers (stellar_address, username, email, github_url, website)
          VALUES ($1, $2, $3, $4, $5)
@@ -960,6 +1006,17 @@ pub async fn create_publisher(
     .fetch_one(&state.db)
     .await
     .map_err(|err| db_internal_error("create publisher", err))?;
+
+    let _ = analytics::record_event(
+        &state.db,
+        AnalyticsEventType::PublisherCreated,
+        None,
+        Some(created.id),
+        None,
+        None,
+        Some(json!({ "stellar_address": created.stellar_address })),
+    )
+    .await;
 
     Ok(Json(created))
 }
@@ -1394,10 +1451,8 @@ pub async fn get_trending_contracts(
 pub async fn verify_contract(
     State(state): State<AppState>,
     headers: HeaderMap,
-    payload: Result<Json<shared::VerifyRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<VerifyRequest>,
 ) -> ApiResult<Json<Value>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
-
     let contract: Contract = sqlx::query_as(
         "SELECT * FROM contracts WHERE contract_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
@@ -1491,6 +1546,17 @@ pub async fn verify_contract(
     .await
     .map_err(|err| db_internal_error("record verification interaction", err))?;
 
+    let _ = analytics::record_event(
+        &state.db,
+        AnalyticsEventType::ContractVerified,
+        Some(contract.id),
+        Some(contract.publisher_id),
+        None,
+        Some(&contract.network),
+        Some(json!({ "verification_id": verification_id })),
+    )
+    .await;
+
     Ok(Json(json!({
         "verified": true,
         "verification_id": verification_id,
@@ -1502,9 +1568,8 @@ pub async fn update_contract_metadata(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    payload: Result<Json<UpdateContractMetadataRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<UpdateContractMetadataRequest>,
 ) -> ApiResult<Json<Contract>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
     if req.name.is_none()
         && req.description.is_none()
         && req.category.is_none()
@@ -1586,11 +1651,22 @@ pub async fn update_contract_metadata(
             ContractAuditEventType::MetadataUpdated,
             after.id,
             req.user_id.unwrap_or(before.publisher_id),
-            Value::Object(changes),
+            Value::Object(changes.clone()),
             &extract_ip_address(&headers),
         )
         .await
         .map_err(|err| db_internal_error("write metadata_updated audit log", err))?;
+
+        let _ = analytics::record_event(
+            &state.db,
+            AnalyticsEventType::ContractUpdated,
+            Some(after.id),
+            Some(after.publisher_id),
+            None,
+            Some(&after.network),
+            Some(json!({ "changes": changes })),
+        )
+        .await;
     }
 
     Ok(Json(after))
@@ -1600,9 +1676,8 @@ pub async fn change_contract_publisher(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    payload: Result<Json<ChangePublisherRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<ChangePublisherRequest>,
 ) -> ApiResult<Json<Contract>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",
@@ -1677,9 +1752,8 @@ pub async fn update_contract_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    payload: Result<Json<UpdateContractStatusRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<UpdateContractStatusRequest>,
 ) -> ApiResult<Json<Value>> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
     let normalized_status = req.status.to_ascii_lowercase();
     if normalized_status != "pending"
         && normalized_status != "verified"
@@ -1980,7 +2054,15 @@ pub async fn get_contract_interactions(
     }
 
     let limit = params.limit.clamp(1, 100);
-    let offset = params.offset.max(0);
+
+    // Cursor logic
+    let cursor = params.cursor.as_ref().and_then(|c| Cursor::decode(c).ok());
+
+    let offset = if cursor.is_some() {
+        0
+    } else {
+        params.offset.max(0)
+    };
 
     let from_ts = params
         .from_timestamp
@@ -2005,8 +2087,10 @@ pub async fn get_contract_interactions(
           AND ($5::timestamptz IS NULL OR created_at <= $5)
           AND ($6::text IS NULL OR interaction_type = $6)
           AND ($7::network_type IS NULL OR network = $7)
-        ORDER BY created_at DESC
-        LIMIT $8 OFFSET $9
+          -- Cursor logic: tie-break with id
+          AND ($8::timestamptz IS NULL OR (created_at < $8 OR (created_at = $8 AND id < $9)))
+        ORDER BY created_at DESC, id DESC
+        LIMIT $10 OFFSET $11
         "#,
     )
     .bind(contract_uuid)
@@ -2016,6 +2100,8 @@ pub async fn get_contract_interactions(
     .bind(to_ts)
     .bind(params.interaction_type.as_deref())
     .bind(params.network.as_ref())
+    .bind(cursor.as_ref().map(|c| c.timestamp))
+    .bind(cursor.as_ref().map(|c| c.id))
     .bind(limit)
     .bind(offset)
     .fetch_all(&state.db)
@@ -2058,22 +2144,37 @@ pub async fn get_contract_interactions(
         })
         .collect();
 
-    Ok(Json(json!(InteractionsListResponse {
+    let next_cursor = if items.len() >= limit as usize {
+        items
+            .last()
+            .map(|last| Cursor::new(last.created_at, last.id).encode())
+    } else {
+        None
+    };
+    let prev_cursor = if params.cursor.is_some() || offset > 0 {
+        items
+            .first()
+            .map(|first| Cursor::new(first.created_at, first.id).encode())
+    } else {
+        None
+    };
+
+    Ok(Json(InteractionsListResponse {
         items,
         total,
         limit,
         offset,
-    })))
+        next_cursor,
+        prev_cursor,
+    }))
 }
 
 /// POST /api/contracts/:id/interactions — ingest one interaction.
 pub async fn post_contract_interaction(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<CreateInteractionRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<CreateInteractionRequest>,
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
-
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",
@@ -2128,10 +2229,8 @@ pub async fn post_contract_interaction(
 pub async fn post_contract_interactions_batch(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<CreateInteractionBatchRequest>, JsonRejection>,
+    ValidatedJson(req): ValidatedJson<CreateInteractionBatchRequest>,
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
-    let Json(req) = payload.map_err(map_json_rejection)?;
-
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",

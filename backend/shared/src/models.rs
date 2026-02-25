@@ -24,6 +24,8 @@ pub struct Contract {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
+    pub health_score: i32,
+    #[serde(default)]
     pub is_maintenance: bool,
     /// Groups rows that represent the same logical contract across networks (Issue #43)
     #[serde(default)]
@@ -209,6 +211,28 @@ pub struct PublishRequest {
     pub dependencies: Vec<DependencyDeclaration>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateContractMetadataRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangePublisherRequest {
+    pub publisher_address: String,
+    pub user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateContractStatusRequest {
+    pub status: String,
+    pub error_message: Option<String>,
+    pub user_id: Option<Uuid>,
+}
+
 /// Request to create a new contract version with ABI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateContractVersionRequest {
@@ -364,6 +388,7 @@ pub struct ContractSearchParams {
     pub limit: Option<i64>,
     pub sort_by: Option<SortBy>,
     pub sort_order: Option<SortOrder>,
+    pub cursor: Option<String>,
 }
 
 /// Pagination params for contract versions (limit/offset style)
@@ -386,6 +411,8 @@ pub struct PaginatedVersionResponse {
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
+    pub next_cursor: Option<String>,
+    pub prev_cursor: Option<String>,
 }
 
 /// Paginated response
@@ -397,6 +424,8 @@ pub struct PaginatedResponse<T> {
     pub page: i64,
     #[serde(rename = "pages")]
     pub total_pages: i64,
+    pub next_cursor: Option<String>,
+    pub prev_cursor: Option<String>,
 }
 
 impl<T> PaginatedResponse<T> {
@@ -411,7 +440,15 @@ impl<T> PaginatedResponse<T> {
             total,
             page,
             total_pages,
+            next_cursor: None,
+            prev_cursor: None,
         }
+    }
+
+    pub fn with_cursors(mut self, next: Option<String>, prev: Option<String>) -> Self {
+        self.next_cursor = next;
+        self.prev_cursor = prev;
+        self
     }
 }
 
@@ -462,6 +499,7 @@ pub struct InteractionsQueryParams {
     pub days: Option<i64>,
     pub interaction_type: Option<String>,
     pub network: Option<Network>,
+    pub cursor: Option<String>,
 }
 
 fn default_interactions_limit() -> i64 {
@@ -494,6 +532,8 @@ pub struct InteractionsListResponse {
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
+    pub next_cursor: Option<String>,
+    pub prev_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -991,6 +1031,8 @@ pub enum AnalyticsEventType {
     ContractVerified,
     ContractDeployed,
     VersionCreated,
+    ContractUpdated,
+    PublisherCreated,
 }
 
 impl std::fmt::Display for AnalyticsEventType {
@@ -1000,8 +1042,25 @@ impl std::fmt::Display for AnalyticsEventType {
             Self::ContractVerified => write!(f, "contract_verified"),
             Self::ContractDeployed => write!(f, "contract_deployed"),
             Self::VersionCreated => write!(f, "version_created"),
+            Self::ContractUpdated => write!(f, "contract_updated"),
+            Self::PublisherCreated => write!(f, "publisher_created"),
         }
     }
+}
+
+/// A simplified entry for the activity feed API
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ActivityFeedEntry {
+    pub id: Uuid,
+    pub event_type: AnalyticsEventType,
+    pub contract_id: Option<Uuid>,
+    pub contract_name: Option<String>,
+    pub contract_stellar_id: Option<String>,
+    pub publisher_id: Option<Uuid>,
+    pub publisher_name: Option<String>,
+    pub network: Option<Network>,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A raw analytics event recorded when a contract lifecycle action occurs
@@ -1696,4 +1755,131 @@ pub struct CreateBackupRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestoreBackupRequest {
     pub backup_date: String,
+}
+
+/// AUTOMATED REALEASE NOTE GENERATOR
+/// Status of auto-generated release notes (draft allows editing before publish)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::Type)]
+#[sqlx(type_name = "release_notes_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseNotesStatus {
+    Draft,
+    Published,
+}
+
+impl std::fmt::Display for ReleaseNotesStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReleaseNotesStatus::Draft => write!(f, "draft"),
+            ReleaseNotesStatus::Published => write!(f, "published"),
+        }
+    }
+}
+
+/// A detected function change in a code diff
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionChange {
+    pub name: String,
+    pub change_type: String, // "added", "removed", "modified"
+    pub old_signature: Option<String>,
+    pub new_signature: Option<String>,
+    pub is_breaking: bool,
+}
+
+/// Summary of a code diff between two contract versions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffSummary {
+    pub files_changed: i32,
+    pub lines_added: i32,
+    pub lines_removed: i32,
+    pub function_changes: Vec<FunctionChange>,
+    pub has_breaking_changes: bool,
+    /// Category counts: features, fixes, breaking
+    pub features_count: i32,
+    pub fixes_count: i32,
+    pub breaking_count: i32,
+}
+
+impl Default for DiffSummary {
+    fn default() -> Self {
+        Self {
+            files_changed: 0,
+            lines_added: 0,
+            lines_removed: 0,
+            function_changes: Vec::new(),
+            has_breaking_changes: false,
+            features_count: 0,
+            fixes_count: 0,
+            breaking_count: 0,
+        }
+    }
+}
+
+/// Stored release notes generation record
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ReleaseNotesGenerated {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub version: String,
+    pub previous_version: Option<String>,
+    pub diff_summary: serde_json::Value,
+    pub changelog_entry: Option<String>,
+    pub notes_text: String,
+    pub status: ReleaseNotesStatus,
+    pub generated_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+/// Request to auto-generate release notes for a contract version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateReleaseNotesRequest {
+    /// The version to generate notes for (must already exist in contract_versions)
+    pub version: String,
+    /// Optional explicit previous version to diff against.
+    /// If omitted, the latest version before `version` is used automatically.
+    pub previous_version: Option<String>,
+    /// URL to the source repository (used for git diff)
+    pub source_url: Option<String>,
+    /// Optional raw CHANGELOG.md content to parse
+    pub changelog_content: Option<String>,
+    /// Contract address to include in the notes
+    pub contract_address: Option<String>,
+}
+
+/// Request to manually edit release notes before publishing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateReleaseNotesRequest {
+    /// Edited release notes text
+    pub notes_text: String,
+}
+
+/// Request to publish (finalize) release notes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishReleaseNotesRequest {
+    /// If true, also update the `release_notes` column on `contract_versions`
+    #[serde(default = "default_true")]
+    pub update_version_record: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Full response for generated release notes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseNotesResponse {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub version: String,
+    pub previous_version: Option<String>,
+    pub diff_summary: DiffSummary,
+    pub changelog_entry: Option<String>,
+    pub notes_text: String,
+    pub status: ReleaseNotesStatus,
+    pub generated_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub published_at: Option<DateTime<Utc>>,
 }

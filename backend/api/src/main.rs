@@ -5,15 +5,25 @@ mod analytics;
 mod breaking_changes;
 mod cache;
 mod compatibility_testing_handlers;
+mod db_monitoring;
+
+mod activity_feed_handlers;
+mod activity_feed_routes;
 mod custom_metrics_handlers;
 mod dependency;
 mod deprecation_handlers;
 mod error;
 mod handlers;
+mod health;
 pub mod health_monitor;
+#[cfg(test)]
+mod health_tests;
 mod metrics;
 mod metrics_handler;
+mod migration_handlers;
 mod rate_limit;
+mod release_notes_handlers;
+mod release_notes_routes;
 pub mod request_tracing;
 mod routes;
 pub mod signing_handlers;
@@ -24,15 +34,6 @@ mod validation;
 // mod auth_handlers;
 // mod resource_handlers;
 // mod resource_tracking;
-mod analytics;
-mod breaking_changes;
-mod custom_metrics_handlers;
-mod dependency;
-mod deprecation_handlers;
-pub mod health_monitor;
-pub mod request_tracing;
-pub mod signing_handlers;
-mod type_safety;
 
 use anyhow::Result;
 use axum::http::{header, HeaderValue, Method};
@@ -57,11 +58,28 @@ async fn main() -> Result<()> {
     // Initialize structured JSON tracing (ELK/Splunk compatible)
     request_tracing::init_json_tracing();
 
-    // Database connection
+    // Database connection with dynamic pool size
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
+    let logical_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    let default_max_pool = (logical_cores * 2).max(10);
+    let max_pool_size = std::env::var("DB_MAX_POOL_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(default_max_pool as u32);
+
+    tracing::info!(
+        max_pool_size = max_pool_size,
+        logical_cores = logical_cores,
+        "Initializing database connection pool"
+    );
+
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(max_pool_size)
+        .acquire_timeout(std::time::Duration::from_secs(30))
         .connect(&database_url)
         .await?;
 
@@ -71,6 +89,9 @@ async fn main() -> Result<()> {
         .await?;
 
     tracing::info!("Database connected and migrations applied");
+
+    // Check migration versioning state on startup (Issue #252)
+    migration_handlers::check_migrations_on_startup(&pool).await;
 
     // Spawn the hourly analytics aggregation background task
     aggregation::spawn_aggregation_task(pool.clone());
@@ -84,17 +105,33 @@ async fn main() -> Result<()> {
     // Create app state
     let is_shutting_down = Arc::new(AtomicBool::new(false));
     let state = AppState::new(pool.clone(), registry, is_shutting_down.clone());
-    
+
+    // Spawn the background DB and cache monitoring task
+    db_monitoring::spawn_db_monitoring_task(pool.clone(), state.cache.clone());
+
     // Warm up the cache
     state.cache.clone().warm_up(pool.clone());
 
     let rate_limit_state = RateLimitState::from_env();
 
+    let allowed_origins = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
+        "http://localhost:3000,https://soroban-registry.vercel.app".to_string()
+    });
+
+    let origins: Vec<HeaderValue> = allowed_origins
+        .split(',')
+        .filter_map(|s| {
+            let s = s.trim();
+            if s.is_empty() {
+                None
+            } else {
+                Some(HeaderValue::from_str(s).expect("Invalid allowed origin"))
+            }
+        })
+        .collect();
+
     let cors = CorsLayer::new()
-        .allow_origin([
-            HeaderValue::from_static("http://localhost:3000"),
-            HeaderValue::from_static("https://soroban-registry.vercel.app"),
-        ])
+        .allow_origin(origins)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
@@ -105,13 +142,14 @@ async fn main() -> Result<()> {
         .merge(routes::health_routes())
         .merge(routes::migration_routes())
         .merge(routes::compatibility_dashboard_routes())
+        .merge(release_notes_routes::release_notes_routes())
+        .nest("/api", activity_feed_routes::routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_tracing::tracing_middleware))
         .layer(middleware::from_fn_with_state(
             rate_limit_state,
             rate_limit::rate_limit_middleware,
         ))
-        .layer(CorsLayer::permissive())
         .layer(cors)
         .with_state(state);
 
@@ -176,5 +214,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-

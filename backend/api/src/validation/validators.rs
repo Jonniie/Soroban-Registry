@@ -30,6 +30,12 @@ lazy_static! {
     static ref XSS_PATTERN_REGEX: Regex = Regex::new(
         r"(?i)(javascript:|on\w+\s*=|<script|<iframe|<object|<embed)"
     ).unwrap();
+
+    /// WASM hash pattern: 64 hexadecimal characters
+    static ref WASM_HASH_REGEX: Regex = Regex::new(r"^[a-fA-F0-9]{64}$").unwrap();
+
+    /// Contract name pattern: Alphanumeric, spaces, hyphens, and underscores
+    static ref NAME_FORMAT_REGEX: Regex = Regex::new(r"^[a-zA-Z0-9\s\-_]+$").unwrap();
 }
 
 /// Validate that a string is not empty after trimming
@@ -128,6 +134,46 @@ pub fn validate_semver(version: &str) -> Result<(), String> {
         return Err("must be a valid semantic version (e.g., 1.0.0)".to_string());
     }
 
+    Ok(())
+}
+
+/// Validate WASM hash format
+/// Must be 64 hexadecimal characters (SHA-256 length)
+pub fn validate_wasm_hash(hash: &str) -> Result<(), String> {
+    let trimmed = hash.trim();
+
+    if trimmed.is_empty() {
+        return Err("wasm_hash is required".to_string());
+    }
+
+    if !WASM_HASH_REGEX.is_match(trimmed) {
+        return Err("must be a valid 64-character hexadecimal SHA-256 hash".to_string());
+    }
+
+    Ok(())
+}
+
+/// Validate contract name format
+/// Alphanumeric, spaces, hyphens, and underscores only
+pub fn validate_name_format(name: &str) -> Result<(), String> {
+    if !NAME_FORMAT_REGEX.is_match(name) {
+        return Err(
+            "name can only contain alphanumeric characters, spaces, hyphens, and underscores"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate category against a whitelist
+pub fn validate_category_whitelist(category: &str, whitelist: &[&str]) -> Result<(), String> {
+    if !whitelist.contains(&category) {
+        return Err(format!(
+            "invalid category '{}'. allowed: [{}]",
+            category,
+            whitelist.join(", ")
+        ));
+    }
     Ok(())
 }
 
@@ -342,5 +388,29 @@ mod tests {
         assert!(validate_semver("0.1.0-alpha").is_ok());
         assert!(validate_semver("2.0.0-rc.1+build.123").is_ok());
         assert!(validate_semver("not-a-version").is_err());
+    }
+
+    #[test]
+    fn test_validate_wasm_hash() {
+        let valid = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(validate_wasm_hash(valid).is_ok());
+
+        assert!(validate_wasm_hash("abc").is_err());
+        assert!(validate_wasm_hash("not-hex").is_err());
+    }
+
+    #[test]
+    fn test_validate_name_format() {
+        assert!(validate_name_format("My Contract").is_ok());
+        assert!(validate_name_format("My-Contract_123").is_ok());
+        assert!(validate_name_format("Contract!").is_err());
+        assert!(validate_name_format("<b>HTML</b>").is_err());
+    }
+
+    #[test]
+    fn test_validate_category_whitelist() {
+        let whitelist = vec!["DEX", "Lending"];
+        assert!(validate_category_whitelist("DEX", &whitelist).is_ok());
+        assert!(validate_category_whitelist("Bridge", &whitelist).is_err());
     }
 }
