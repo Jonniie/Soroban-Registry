@@ -122,9 +122,12 @@ impl RateLimitState {
         });
     }
 
-    async fn check_request<B>(&self, request: &Request<B>) -> RateLimitDecision {
-        let (limit, endpoint_key) = self.select_limit(request);
-        let ip = extract_client_ip(request);
+    async fn check_request(
+        &self,
+        ip: String,
+        endpoint_key: String,
+        limit: u32,
+    ) -> RateLimitDecision {
         let key = BucketKey { ip, endpoint_key };
         let now = Instant::now();
 
@@ -293,8 +296,10 @@ pub async fn rate_limit_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // check_request is now async because it awaits the tokio Mutex.
-    let decision = rate_limiter.check_request(&request).await;
+    // Extract request metadata before awaiting to avoid borrowing `request` across `.await`.
+    let (limit, endpoint_key) = rate_limiter.select_limit(&request);
+    let ip = extract_client_ip(&request);
+    let decision = rate_limiter.check_request(ip, endpoint_key, limit).await;
 
     if !decision.allowed {
         let mut response = (
@@ -699,7 +704,9 @@ mod tests {
             .header("x-forwarded-for", "10.0.0.1")
             .body(Body::empty())
             .unwrap();
-        state.check_request(&req).await;
+        let (limit, endpoint_key) = state.select_limit(&req);
+        let ip = extract_client_ip(&req);
+        state.check_request(ip, endpoint_key, limit).await;
 
         // Confirm one bucket exists
         assert_eq!(state.buckets.lock().await.len(), 1);

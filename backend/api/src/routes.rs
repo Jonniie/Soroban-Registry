@@ -107,6 +107,38 @@ pub fn contract_routes() -> Router<AppState> {
             "/api/contracts/:id/impact",
             get(handlers::get_impact_analysis),
         )
+        .route(
+            "/api/contracts/:id/deprecation-info",
+            get(deprecation_handlers::get_deprecation_info),
+        )
+        .route(
+            "/api/contracts/:id/deprecate",
+            post(deprecation_handlers::deprecate_contract),
+        )
+        .route(
+            "/api/contracts/:id/state/:key",
+            get(handlers::get_contract_state).post(handlers::update_contract_state),
+        )
+        .route(
+            "/api/contracts/:id/analytics",
+            get(handlers::get_contract_analytics),
+        )
+        .route(
+            "/api/contracts/:id/trust-score",
+            get(handlers::get_trust_score),
+        )
+        .route(
+            "/api/contracts/:id/dependencies",
+            get(handlers::get_contract_dependencies),
+        )
+        .route(
+            "/api/contracts/:id/dependents",
+            get(handlers::get_contract_dependents),
+        )
+        .route(
+            "/api/contracts/:id/impact",
+            get(handlers::get_impact_analysis),
+        )
         .route("/api/contracts/verify", post(handlers::verify_contract))
         .route("/api/admin/audit-logs", get(handlers::get_all_audit_logs))
         .route(
@@ -213,11 +245,10 @@ pub fn migration_routes() -> Router<AppState> {
 }
 
 pub fn compatibility_dashboard_routes() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/compatibility-dashboard",
-            get(compatibility_testing_handlers::get_compatibility_dashboard),
-        )
+    Router::new().route(
+        "/api/compatibility-dashboard",
+        get(compatibility_testing_handlers::get_compatibility_dashboard),
+    )
 }
 
 pub fn canary_routes() -> Router<AppState> {

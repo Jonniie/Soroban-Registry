@@ -390,7 +390,10 @@ mod tests {
 
     #[test]
     fn test_security_score_edge_max() {
-        assert_eq!(derive_security_score(MAX_TOTAL_HEALTH_SCORE), MAX_SECURITY_SCORE);
+        assert_eq!(
+            derive_security_score(MAX_TOTAL_HEALTH_SCORE),
+            MAX_SECURITY_SCORE
+        );
     }
 
     #[test]

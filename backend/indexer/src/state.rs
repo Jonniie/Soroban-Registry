@@ -213,6 +213,7 @@ impl StateManager {
             SELECT 
                 network::text as network,
                 last_indexed_ledger_height,
+                last_indexed_ledger_hash,
                 last_checkpoint_ledger_height,
                 consecutive_failures
             FROM indexer_state
@@ -240,7 +241,9 @@ impl StateManager {
                     last_indexed_ledger_height: row
                         .try_get::<i64, _>("last_indexed_ledger_height")
                         .ok()? as u64,
-                    last_indexed_ledger_hash: None,
+                    last_indexed_ledger_hash: row
+                        .try_get::<Option<String>, _>("last_indexed_ledger_hash")
+                        .ok()?,
                     last_checkpoint_ledger_height: row
                         .try_get::<i64, _>("last_checkpoint_ledger_height")
                         .ok()? as u64,
@@ -276,7 +279,13 @@ mod tests {
 
     #[test]
     fn test_state_next_ledger() {
-        let state = make_state(100, 0);
+        let state = IndexerState {
+            network: Network::Testnet,
+            last_indexed_ledger_height: 100,
+            last_indexed_ledger_hash: None,
+            last_checkpoint_ledger_height: 100,
+            consecutive_failures: 0,
+        };
         assert_eq!(state.next_ledger_to_process(), 101);
     }
 
@@ -288,7 +297,13 @@ mod tests {
 
     #[test]
     fn test_state_record_failure() {
-        let mut state = make_state(100, 0);
+        let mut state = IndexerState {
+            network: Network::Testnet,
+            last_indexed_ledger_height: 100,
+            last_indexed_ledger_hash: None,
+            last_checkpoint_ledger_height: 100,
+            consecutive_failures: 0,
+        };
 
         state.record_failure();
         assert_eq!(state.consecutive_failures, 1);
@@ -299,7 +314,13 @@ mod tests {
 
     #[test]
     fn test_state_clear_failures() {
-        let mut state = make_state(100, 5);
+        let mut state = IndexerState {
+            network: Network::Testnet,
+            last_indexed_ledger_height: 100,
+            last_indexed_ledger_hash: None,
+            last_checkpoint_ledger_height: 100,
+            consecutive_failures: 5,
+        };
 
         state.clear_failures();
         assert_eq!(state.consecutive_failures, 0);

@@ -228,15 +228,7 @@ fn parse_interaction_type(
 
 async fn record_contract_interaction(
     db: &sqlx::PgPool,
-    contract_id: Uuid,
-    account: Option<&str>,
-    interaction_type: &str,
-    transaction_hash: Option<&str>,
-    method: Option<&str>,
-    parameters: Option<&serde_json::Value>,
-    return_value: Option<&serde_json::Value>,
-    timestamp: chrono::DateTime<chrono::Utc>,
-    network: &Network,
+    input: ContractInteractionInsert<'_>,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = db.begin().await?;
 
@@ -251,16 +243,16 @@ async fn record_contract_interaction(
         RETURNING id
         "#,
     )
-    .bind(contract_id)
-    .bind(account)
-    .bind(interaction_type)
-    .bind(transaction_hash)
-    .bind(method)
-    .bind(parameters)
-    .bind(return_value)
-    .bind(timestamp)
-    .bind(network)
-    .bind(timestamp)
+    .bind(input.contract_id)
+    .bind(input.account)
+    .bind(input.interaction_type)
+    .bind(input.transaction_hash)
+    .bind(input.method)
+    .bind(input.parameters)
+    .bind(input.return_value)
+    .bind(input.timestamp)
+    .bind(input.network)
+    .bind(input.timestamp)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -275,16 +267,28 @@ async fn record_contract_interaction(
           updated_at = NOW()
         "#,
     )
-    .bind(contract_id)
-    .bind(interaction_type)
-    .bind(network)
-    .bind(timestamp.date_naive())
+    .bind(input.contract_id)
+    .bind(input.interaction_type)
+    .bind(input.network)
+    .bind(input.timestamp.date_naive())
     .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
 
     Ok(interaction_id)
+}
+
+struct ContractInteractionInsert<'a> {
+    contract_id: Uuid,
+    account: Option<&'a str>,
+    interaction_type: &'a str,
+    transaction_hash: Option<&'a str>,
+    method: Option<&'a str>,
+    parameters: Option<&'a serde_json::Value>,
+    return_value: Option<&'a serde_json::Value>,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    network: &'a Network,
 }
 
 pub async fn health_check(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
@@ -1117,15 +1121,17 @@ pub async fn publish_contract(
 
     record_contract_interaction(
         &state.db,
-        contract.id,
-        Some(&publisher.stellar_address),
-        "publish_success",
-        None,
-        None,
-        None,
-        None,
-        chrono::Utc::now(),
-        &contract.network,
+        ContractInteractionInsert {
+            contract_id: contract.id,
+            account: Some(&publisher.stellar_address),
+            interaction_type: "publish_success",
+            transaction_hash: None,
+            method: None,
+            parameters: None,
+            return_value: None,
+            timestamp: chrono::Utc::now(),
+            network: &contract.network,
+        },
     )
     .await
     .map_err(|err| db_internal_error("record publish_success interaction", err))?;
@@ -2144,15 +2150,17 @@ pub async fn update_contract_status(
 
         record_contract_interaction(
             &state.db,
-            contract_uuid,
-            None,
-            interaction_type,
-            None,
-            Some("status_update"),
-            None,
-            None,
-            chrono::Utc::now(),
-            &contract.network,
+            ContractInteractionInsert {
+                contract_id: contract_uuid,
+                account: None,
+                interaction_type,
+                transaction_hash: None,
+                method: Some("status_update"),
+                parameters: None,
+                return_value: None,
+                timestamp: chrono::Utc::now(),
+                network: &contract.network,
+            },
         )
         .await
         .map_err(|err| db_internal_error("record status interaction", err))?;
@@ -2482,15 +2490,17 @@ pub async fn post_contract_interaction(
     let network = req.network.unwrap_or(contract_network);
     let interaction_id = record_contract_interaction(
         &state.db,
-        contract_uuid,
-        req.account.as_deref(),
-        &interaction_type,
-        req.transaction_hash.as_deref(),
-        req.method.as_deref(),
-        req.parameters.as_ref(),
-        req.return_value.as_ref(),
-        created_at,
-        &network,
+        ContractInteractionInsert {
+            contract_id: contract_uuid,
+            account: req.account.as_deref(),
+            interaction_type: &interaction_type,
+            transaction_hash: req.transaction_hash.as_deref(),
+            method: req.method.as_deref(),
+            parameters: req.parameters.as_ref(),
+            return_value: req.return_value.as_ref(),
+            timestamp: created_at,
+            network: &network,
+        },
     )
     .await
     .map_err(|err| db_internal_error("insert contract interaction", err))?;
@@ -2536,15 +2546,17 @@ pub async fn post_contract_interactions_batch(
         let network = i.network.clone().unwrap_or_else(|| contract_network.clone());
         let interaction_id = record_contract_interaction(
             &state.db,
-            contract_uuid,
-            i.account.as_deref(),
-            &interaction_type,
-            i.transaction_hash.as_deref(),
-            i.method.as_deref(),
-            i.parameters.as_ref(),
-            i.return_value.as_ref(),
-            created_at,
-            &network,
+            ContractInteractionInsert {
+                contract_id: contract_uuid,
+                account: i.account.as_deref(),
+                interaction_type: &interaction_type,
+                transaction_hash: i.transaction_hash.as_deref(),
+                method: i.method.as_deref(),
+                parameters: i.parameters.as_ref(),
+                return_value: i.return_value.as_ref(),
+                timestamp: created_at,
+                network: &network,
+            },
         )
         .await
         .map_err(|err| db_internal_error("insert contract interaction batch", err))?;

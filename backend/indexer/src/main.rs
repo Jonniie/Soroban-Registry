@@ -207,15 +207,19 @@ impl IndexerService {
             let ledger_height = next_ledger + i;
 
             // Fetch ledger details to get the hash
-            let ledger = self.rpc_client.get_ledger(ledger_height).await.map_err(|e| {
-                error!(
-                    network = network_name,
-                    ledger = ledger_height,
-                    error = %e,
-                    "Failed to fetch ledger details"
-                );
-                e
-            })?;
+            let ledger = self
+                .rpc_client
+                .get_ledger(ledger_height)
+                .await
+                .map_err(|e| {
+                    error!(
+                        network = network_name,
+                        ledger = ledger_height,
+                        error = %e,
+                        "Failed to fetch ledger details"
+                    );
+                    e
+                })?;
 
             // Fetch ledger operations
             match self.rpc_client.get_ledger_operations(ledger_height).await {

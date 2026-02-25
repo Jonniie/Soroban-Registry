@@ -2,6 +2,7 @@
 
 mod aggregation;
 mod analytics;
+mod auth;
 mod breaking_changes;
 mod cache;
 mod compatibility_testing_handlers;
@@ -35,7 +36,6 @@ pub mod security_log;
 // mod auth_handlers;
 // mod resource_handlers;
 // mod resource_tracking;
-
 
 use anyhow::Result;
 use axum::extract::{Request, State};
@@ -75,6 +75,19 @@ async fn main() -> Result<()> {
 
     // Initialize structured JSON tracing (ELK/Splunk compatible)
     request_tracing::init_json_tracing();
+
+    // Fail fast on startup when JWT configuration is invalid.
+    if let Err(err) = auth::AuthManager::from_env() {
+        tracing::error!(
+            error = %err,
+            "JWT authentication configuration is invalid. Set JWT_SECRET to a strong value with at least {} characters.",
+            auth::MIN_JWT_SECRET_LEN
+        );
+        return Err(anyhow::anyhow!(
+            "Invalid JWT authentication configuration: {}",
+            err
+        ));
+    }
 
     // Database connection with dynamic pool size
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -220,7 +233,9 @@ async fn main() -> Result<()> {
             _ = terminate => {},
         }
 
-        tracing::info!("SIGTERM/SIGINT received. Failing health checks and stopping new requests...");
+        tracing::info!(
+            "SIGTERM/SIGINT received. Failing health checks and stopping new requests..."
+        );
         let _ = tx.send(()).await;
     });
 
@@ -233,7 +248,10 @@ async fn main() -> Result<()> {
     if let Some(()) = rx.recv().await {
         is_shutting_down.store(true, Ordering::SeqCst);
         let initial_in_flight = crate::metrics::HTTP_IN_FLIGHT.get();
-        tracing::info!("Graceful shutdown initiated. In-flight requests: {}", initial_in_flight);
+        tracing::info!(
+            "Graceful shutdown initiated. In-flight requests: {}",
+            initial_in_flight
+        );
 
         let timeout_secs = std::env::var("SHUTDOWN_TIMEOUT")
             .unwrap_or_else(|_| "30".to_string())
