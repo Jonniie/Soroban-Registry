@@ -199,6 +199,13 @@ pub fn health_routes() -> Router<AppState> {
         .route("/api/stats", get(handlers::get_stats))
 }
 
+pub fn health_monitor_routes() -> Router<AppState> {
+    Router::new().route(
+        "/api/health-monitor/status",
+        get(crate::health_monitor::get_health_monitor_status),
+    )
+}
+
 pub fn migration_routes() -> Router<AppState> {
     Router::new()
         // Database Migration Versioning and Rollback (Issue #252)
