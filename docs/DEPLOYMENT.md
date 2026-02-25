@@ -48,6 +48,7 @@ cargo install sqlx-cli --no-default-features --features postgres
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `DATABASE_URL` | — | **Yes** | PostgreSQL connection string |
+| `JWT_SECRET` | — | **Yes** | JWT signing secret (must be at least 32 characters) |
 | `RUST_LOG` | `info` | No | Tracing log level (`debug`, `info`, `warn`, `error`) |
 | `OTLP_ENDPOINT` | — | No | OpenTelemetry collector endpoint (e.g. `http://jaeger:4317`) |
 | `CACHE_ENABLED` | `true` | No | Enable in-process Moka cache |
@@ -97,6 +98,7 @@ Minimum `.env` for local development:
 
 ```dotenv
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/soroban_registry
+JWT_SECRET=replace-with-a-random-32-plus-character-secret
 NEXT_PUBLIC_API_URL=http://localhost:3001
 STELLAR_NETWORK=testnet
 RUST_LOG=debug
@@ -265,7 +267,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3
 
 - [ ] All environment variables set and validated in the target environment.
 - [ ] `DATABASE_URL` points to a managed PostgreSQL instance (not the dev container).
-- [ ] `SECRET_KEY` / JWT signing key rotated from default values.
+- [ ] `JWT_SECRET` is set from a secret manager and is at least 32 characters (no defaults).
 - [ ] `SLACK_WEBHOOK_URL` and/or `PAGERDUTY_SERVICE_KEY` configured for alerts.
 - [ ] TLS termination configured upstream (load balancer or ingress controller).
 - [ ] `NEXT_PUBLIC_API_URL` set to the **public** API URL (not `localhost`).
@@ -327,6 +329,11 @@ spec:
                 secretKeyRef:
                   name: soroban-secrets
                   key: database-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: soroban-secrets
+                  key: jwt-secret
             - name: RUST_LOG
               value: info
             - name: OTLP_ENDPOINT

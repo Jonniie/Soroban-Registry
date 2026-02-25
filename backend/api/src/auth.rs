@@ -4,6 +4,9 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
+
+pub const MIN_JWT_SECRET_LEN: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthClaims {
@@ -24,6 +27,30 @@ pub struct AuthManager {
     decoding_key: DecodingKey,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthConfigError {
+    MissingJwtSecret,
+    JwtSecretTooShort { min_len: usize, actual_len: usize },
+}
+
+impl fmt::Display for AuthConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthConfigError::MissingJwtSecret => write!(f, "JWT_SECRET must be set"),
+            AuthConfigError::JwtSecretTooShort {
+                min_len,
+                actual_len,
+            } => write!(
+                f,
+                "JWT_SECRET must be at least {} characters (got {})",
+                min_len, actual_len
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AuthConfigError {}
+
 impl AuthManager {
     pub fn new(secret: String) -> Self {
         Self {
@@ -33,9 +60,21 @@ impl AuthManager {
         }
     }
 
-    pub fn from_env() -> Self {
-        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-only-secret".to_string());
-        Self::new(secret)
+    pub fn from_env() -> Result<Self, AuthConfigError> {
+        let secret = std::env::var("JWT_SECRET").map_err(|_| AuthConfigError::MissingJwtSecret)?;
+        Self::validate_jwt_secret(&secret)?;
+        Ok(Self::new(secret))
+    }
+
+    fn validate_jwt_secret(secret: &str) -> Result<(), AuthConfigError> {
+        let actual_len = secret.len();
+        if actual_len < MIN_JWT_SECRET_LEN {
+            return Err(AuthConfigError::JwtSecretTooShort {
+                min_len: MIN_JWT_SECRET_LEN,
+                actual_len,
+            });
+        }
+        Ok(())
     }
 
     pub fn create_challenge(&mut self, address: &str) -> String {
@@ -117,7 +156,7 @@ fn decode_hex_64(value: &str) -> Option<[u8; 64]> {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return None;
     }
     (0..value.len())
@@ -165,5 +204,21 @@ mod tests {
         assert!(first.is_ok());
         let second = auth.verify_and_issue_jwt(&vk_hex, &vk_hex, &sig_hex);
         assert!(second.is_err());
+    }
+
+    #[test]
+    fn jwt_secret_length_is_enforced() {
+        let too_short = "a".repeat(MIN_JWT_SECRET_LEN - 1);
+        let result = AuthManager::validate_jwt_secret(&too_short);
+        assert!(matches!(
+            result,
+            Err(AuthConfigError::JwtSecretTooShort {
+                min_len: MIN_JWT_SECRET_LEN,
+                actual_len: _
+            })
+        ));
+
+        let valid = "a".repeat(MIN_JWT_SECRET_LEN);
+        assert!(AuthManager::validate_jwt_secret(&valid).is_ok());
     }
 }

@@ -96,6 +96,7 @@ impl IndexerService {
                 IndexerState {
                     network: self.config.network.network.clone(),
                     last_indexed_ledger_height: 0,
+                    last_indexed_ledger_hash: None,
                     last_checkpoint_ledger_height: 0,
                     consecutive_failures: 0,
                 }
@@ -190,15 +191,19 @@ impl IndexerService {
             let ledger_height = next_ledger + i;
 
             // Fetch ledger details to get the hash
-            let ledger = self.rpc_client.get_ledger(ledger_height).await.map_err(|e| {
-                error!(
-                    network = network_name,
-                    ledger = ledger_height,
-                    error = %e,
-                    "Failed to fetch ledger details"
-                );
-                e
-            })?;
+            let ledger = self
+                .rpc_client
+                .get_ledger(ledger_height)
+                .await
+                .map_err(|e| {
+                    error!(
+                        network = network_name,
+                        ledger = ledger_height,
+                        error = %e,
+                        "Failed to fetch ledger details"
+                    );
+                    e
+                })?;
 
             // Fetch ledger operations
             match self.rpc_client.get_ledger_operations(ledger_height).await {

@@ -1787,7 +1787,7 @@ pub struct FunctionChange {
 }
 
 /// Summary of a code diff between two contract versions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DiffSummary {
     pub files_changed: i32,
     pub lines_added: i32,
@@ -1798,21 +1798,6 @@ pub struct DiffSummary {
     pub features_count: i32,
     pub fixes_count: i32,
     pub breaking_count: i32,
-}
-
-impl Default for DiffSummary {
-    fn default() -> Self {
-        Self {
-            files_changed: 0,
-            lines_added: 0,
-            lines_removed: 0,
-            function_changes: Vec::new(),
-            has_breaking_changes: false,
-            features_count: 0,
-            fixes_count: 0,
-            breaking_count: 0,
-        }
-    }
 }
 
 /// Stored release notes generation record

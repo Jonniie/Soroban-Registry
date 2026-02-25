@@ -516,7 +516,7 @@ mod tests {
             name: "My Contract".to_string(),
             description: Some("A test contract".to_string()),
             network: Network::Testnet,
-            category: Some("DeFi".to_string()),
+            category: Some("Token".to_string()),
             tags: vec!["token".to_string(), "defi".to_string()],
             source_url: Some("https://github.com/user/repo".to_string()),
             publisher_address: valid_stellar_address(),

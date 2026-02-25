@@ -268,6 +268,7 @@ mod tests {
             tags: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            health_score: 100,
             is_maintenance: false,
             logical_id: None,
             network_configs: None,
@@ -281,7 +282,10 @@ mod tests {
 
     #[test]
     fn test_security_score_edge_max() {
-        assert_eq!(derive_security_score(MAX_TOTAL_HEALTH_SCORE), MAX_SECURITY_SCORE);
+        assert_eq!(
+            derive_security_score(MAX_TOTAL_HEALTH_SCORE),
+            MAX_SECURITY_SCORE
+        );
     }
 
     #[test]
@@ -356,4 +360,3 @@ mod tests {
         assert_eq!(health.security_score, 50);
     }
 }
-
